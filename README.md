@@ -120,13 +120,13 @@ sca --kill              # Kill all agents and connections
 
 ## SSH Agent Multiplexing
 
-The system supports two multiplexer options:
+The system includes its own SSH agent multiplexer implementation (`sshagentmux.py`) that combines local and remote SSH agents into a single socket. Additionally, if available, the system can use the external [ssh-agent-mux](https://github.com/overhacked/ssh-agent-mux) project, which provides better performance and additional features.
 
-### Option 1: Python Multiplexer (Built-in)
-The default `sshagentmux.py` combines your local and remote SSH agents.
+### Option 1: Built-in Python Multiplexer (Default)
+The project includes `sshagentmux.py`, a Python-based SSH agent multiplexer that combines your local and remote SSH agents. This is the default implementation and requires no additional dependencies beyond Python.
 
-### Option 2: ssh-agent-mux (Recommended)
-A Rust-based multiplexer with better performance. 
+### Option 2: ssh-agent-mux (Optional, Recommended)
+If [ssh-agent-mux](https://github.com/overhacked/ssh-agent-mux) is installed, the system will automatically detect and use it. This Rust-based multiplexer offers better performance and is recommended for production use. 
 
 **Installation:**
 ```bash
