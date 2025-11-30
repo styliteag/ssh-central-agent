@@ -13,6 +13,55 @@ The **SSH Central Agent (SCA)** is a gateway system that:
 
 The `sca` command creates a subshell environment where your SSH client can access both local and remote SSH keys through a single agent socket, making it easy to connect to hosts across different security zones without manually managing multiple SSH agents.
 
+## Use Case: Centralized YubiKey Access via SSH Gateway
+
+A common enterprise deployment pattern involves:
+
+1. **SSH Gateway Hosts**: Multi-level jump hosts (`sca-jmp-level1`, `sca-jmp-level2`, `sca-jmp-level3`, etc.) that route connections to protected infrastructure based on security levels
+2. **Central Servers with YubiKeys**: Each jump host (level 1 and above) can have one or more YubiKeys physically attached and managed by the SSH agent. Level 0 typically does not use YubiKeys.
+3. **Local Agent Access**: Users connect to the appropriate gateway based on their security level, which forwards the remote SSH agent socket (containing YubiKey keys) to their local machine
+
+### How It Works
+
+When you run `sca`, it:
+- Connects to the SSH gateway host corresponding to your security level (level 1-x) using your local credentials
+- Establishes an SSH agent forwarding connection to the jump host's agent (which has access to one or more YubiKeys)
+- Creates a local socket (`~/.ssh/scadev-agent.sock`) that proxies authentication requests to the remote YubiKey(s)
+- Multiplexes this remote agent with your local agent, giving you access to both sets of keys seamlessly
+
+**Multi-YubiKey Support**: Each jump host can have multiple YubiKeys attached, and all keys from all YubiKeys on that host become available through the forwarded agent socket. This allows for redundancy, different key types, or multiple security roles within the same level.
+
+### Benefits
+
+- **Centralized Security**: YubiKeys remain physically secured at the jump host servers, never leaving the controlled environment
+- **Multi-Level Architecture**: Different security levels (1-x) can have their own YubiKey(s), allowing for granular access control and separation of concerns
+- **Scalable Key Management**: Each level can have one or more YubiKeys, supporting redundancy, different key types, or multiple security roles
+- **No Physical Access Required**: Users don't need direct physical access to the YubiKeys - authentication happens remotely through the gateway
+- **Seamless Experience**: Once connected via `sca`, you can use YubiKey-protected keys just like local keys - no manual intervention needed
+- **Multi-User Access**: Multiple authorized users at the same security level can access the same secure keys simultaneously through their own gateway connections
+- **Audit Trail**: All authentication attempts go through the centralized gateway, providing better security monitoring and logging
+- **Key Protection**: Private keys never leave the secure server - only signing operations are forwarded, keeping the actual key material safe
+
+This architecture is ideal for organizations that need to provide secure SSH access to sensitive infrastructure while maintaining strict control over hardware security keys across multiple security levels.
+
+### Server Setup Documentation
+
+Detailed documentation for setting up the `sca-jmp` (jump host) and `sca-key` (YubiKey server) infrastructure will be published in a future release. This will include:
+
+- Jump host configuration and deployment
+- YubiKey server setup and agent configuration
+- Multi-level security architecture implementation
+- Best practices for production deployments
+
+**Interested in Enterprise Deployment?**
+
+If your company is interested in implementing this SSH gateway architecture with centralized YubiKey management, we can help with setup and deployment. Please contact us for assistance with:
+
+- Architecture design and planning
+- Jump host and YubiKey server configuration
+- Security level implementation
+- Custom deployment requirements
+
 ## Quick Start
 
 ### Prerequisites
