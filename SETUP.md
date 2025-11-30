@@ -12,6 +12,11 @@ This repository contains the public SSH Central Agent (SCA) configuration. Host 
    cd ~/sca
    git clone git@github.com:styliteag/ssh-central-agent.git ssh-central-agent
    git clone ssh://git@git-yourdomain.com/your-project/ssh-central-agent-hosts.git ssh-central-agent-hosts
+   cd ssh-central-agent
+   cp localvars-example.yml localvars.yml
+   # edit localvars.yml with your credentials and hostnames
+   ln -s ../ssh-central-agent-hosts hosts
+   ./playbook.yml
    ```
 
    If you already cloned without submodules, initialize them:
