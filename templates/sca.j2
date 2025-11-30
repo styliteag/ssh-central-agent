@@ -392,7 +392,7 @@ while getopts ":l:hwdr-:" opt; do
           pkill -f "sshagentmux.py"
           
           log_info "Removing socket files"
-          rm -f {{ sss_auth_sock }}
+          rm -f {{ sca_auth_sock }}
           rm -f {{ mux_auth_sock }}
           
           log_success "All agents and connections killed"
@@ -496,7 +496,7 @@ fi
 if [ "$SCA_SOCK" == "false" ]; then
   log_info "Killing remote agent by finding ssh with ragent"
   pkill -f " ragent "
-  log_info "Killing muxagent by kill ssshagentmux.py"
+  log_info "Killing muxagent by kill sshagentmux.py"
   pkill -f "sshagentmux.py"
   log_info "Killing ssh-agent-mux processes"
   pkill -x "ssh-agent-mux" 2>/dev/null || true

@@ -1,3 +1,12 @@
+# Example of localvars.yml file
+# copy this file to localvars.yml and change the values
+#
+# then run the playbook:
+# ansible-playbook playbook.yml
+
+sca_key_server: ip_or_hostname_of_the_sca_key_server
+sca_key_server_port: port_of_the_sca_key_server
+
 # Set to your Username on the remote servers
 remote_username: CHANGE_ME
 

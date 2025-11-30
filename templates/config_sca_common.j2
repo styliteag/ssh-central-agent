@@ -17,8 +17,8 @@
 KbdInteractiveAuthentication no
 TCPKeepAlive yes
 
-#IdentityAgent {{ sss_auth_sock }}
-### ForwardAgent {{ sss_auth_sock }}
+#IdentityAgent {{ sca_auth_sock }}
+### ForwardAgent {{ sca_auth_sock }}
 IdentityAgent {{ mux_auth_sock }}
 ### ForwardAgent {{ mux_auth_sock }}
 

@@ -30,7 +30,6 @@
     sca_auth_sock: ~/.ssh/scadev-agent.sock
     mux_auth_sock: ~/.ssh/scadev-mux.sock
     command_sca: sca
-    #command_sssssh: ssssh
   tasks:
   - name: Include Local Vars, overwriting defaults if the user has some
     include_vars: ./localvars.yml

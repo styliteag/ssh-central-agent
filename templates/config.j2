@@ -25,33 +25,33 @@ Include {{ playbook_dir }}/hosts/*
 
 Host sca-key sca-key_my sca-key_local sca-key_org sca-key_direct sca-key_mux
 	User {{ remote_username }}
-	HostName CHANGE_ME
-	Port 22
+	HostName {{ sca_key_server }}
+	Port {{ sca_key_server_port }}
 	ExitOnForwardFailure yes
 	ForwardAgent no
 	#IdentityAgent none
 	#IdentityFile {{ my_ssh_key }}
-	SendEnv SCA_*
-	SetEnv SCA_LOCALUSER={{ remote_username }}
+	# TODO Change to SCA in the future
+	SendEnv STY_*
+	SetEnv STY_LOCALUSER={{ remote_username }}
 
 # The sca-magic-jump is "magic" for the sed command in sca
 Host sca-jmp-level0 jmp0 jmp-level0 jump-level0 L0-sca-magic-jump
 	User {{ remote_username }}
-	HostName CHANGE_ME
-	Port 22
+	HostName {{ sca_key_server }}
 	ForwardAgent no
 	#IdentityAgent $LOCAL_SSH_AUTH_SOCK
 	IdentityAgent {{ mux_auth_sock }}
 	#BatchMode yes
 	ExitOnForwardFailure yes
 	ConnectTimeout 1
-	SendEnv SCA_*
-	SetEnv SCA_LOCALUSER={{ remote_username }}
+	SendEnv STY_*
+	SetEnv STY_LOCALUSER={{ remote_username }}
 
 Host sca-jmp-level1 jmp1 jmp-level1 jump-level1 L1-sca-magic-jump
 	User {{ remote_username }}
-	HostName CHANGE_ME
-	Port 22
+	HostName {{ sca_key_server }}
+	Port 9901
 	#ForwardAgent $SCA_SSH_AUTH_SOCK
 	#ForwardAgent /path/to/.sock
 	#ForwardAgent yes
@@ -62,14 +62,14 @@ Host sca-jmp-level1 jmp1 jmp-level1 jump-level1 L1-sca-magic-jump
 	#IdentityAgent $ORG_SSH_AUTH_SOCK
 	IdentityAgent {{ mux_auth_sock }}
 	#IdentityFile {{ my_ssh_key }}
-	SendEnv SCA_*
-	SetEnv SCA_LOCALUSER={{ remote_username }}
+	SendEnv STY_*
+	SetEnv STY_LOCALUSER={{ remote_username }}
 	#ProxyJump sca-jmp-level0
 
 Host sca-jmp-level2 jmp2 jmp-level2 jump-level2 L2-sca-magic-jump
 	User {{ remote_username }}
-	HostName CHANGE_ME
-	Port 22
+	HostName {{ sca_key_server }}
+	Port 9902
 	#ForwardAgent $SCA_SSH_AUTH_SOCK
 	#ForwardAgent /path/to/.sock
 	#ForwardAgent yes
@@ -80,14 +80,14 @@ Host sca-jmp-level2 jmp2 jmp-level2 jump-level2 L2-sca-magic-jump
 	#IdentityAgent $ORG_SSH_AUTH_SOCK
 	IdentityAgent {{ mux_auth_sock }}
 	#IdentityFile {{ my_ssh_key }}
-	SendEnv SCA_*
-	SetEnv SCA_LOCALUSER={{ remote_username }}
+	SendEnv STY_*
+	SetEnv STY_LOCALUSER={{ remote_username }}
 	#ProxyJump sca-jmp-level0
 
 Host sca-jmp-level3 jmp3 jmp-level3 jump-level3 L3-sca-magic-jump
 	User {{ remote_username }}
-	HostName CHANGE_ME
-	Port 22
+	HostName {{ sca_key_server }}
+	Port 9903
 	#ForwardAgent $SCA_SSH_AUTH_SOCK
 	#ForwardAgent /path/to/.sock
 	#ForwardAgent yes
@@ -98,33 +98,33 @@ Host sca-jmp-level3 jmp3 jmp-level3 jump-level3 L3-sca-magic-jump
 	#IdentityAgent $ORG_SSH_AUTH_SOCK
 	IdentityAgent {{ mux_auth_sock }}
 	#IdentityFile {{ my_ssh_key }}
-	SendEnv SCA_*
-	SetEnv SCA_LOCALUSER={{ remote_username }}
+	SendEnv STY_*
+	SetEnv STY_LOCALUSER={{ remote_username }}
 	#ProxyJump sca-jmp-level0
 
 Host sca-jmp-level0 jmp0 jmp-level0 jump-level0 L0-sca-magic-jump
 	User {{ remote_username }}
-	HostName CHANGE_ME
-	Port 22
+	HostName {{ sca_key_server }}
+	Port {{ sca_key_server_port }}
 	ForwardAgent no
 	IdentityAgent {{ mux_auth_sock }}
 	#BatchMode yes
 	ExitOnForwardFailure yes
 	ConnectTimeout 1
-	SendEnv SCA_*
-	SetEnv SCA_LOCALUSER={{ remote_username }}
+	SendEnv STY_*
+	SetEnv STY_LOCALUSER={{ remote_username }}
 
-Host mydev sca-mydev sca-mydev_my sca-mydev_local sca-mydev_direct sca-mydev_sss sca-mydev_mux
+Host mydev sca-mydev sca-mydev_my sca-mydev_local sca-mydev_direct sca-mydev_sca sca-mydev_mux
 	user {{ remote_username }}
-        hostname CHANGE_ME
+        hostname 10.50.6.1
         port 22
         # mydev needs to use the Forwarded key for gitlab
         ForwardAgent yes
         include ~/.ssh/config_sca_common
 
-Host mydev40 sca-mydev40 sca-mydev40_my sca-mydev40_local sca-mydev40_direct sca-mydev40_sss sca-mydev40_mux
+Host mydev40 sca-mydev40 sca-mydev40_my sca-mydev40_local sca-mydev40_direct sca-mydev40_sca sca-mydev40_mux
 	user {{ remote_username }}
-        hostname CHANGE_ME
+        hostname 10.40.6.1
         port 22
         # mydev needs to use the Forwarded key for gitlab
         ForwardAgent yes
@@ -145,7 +145,7 @@ Host *_local
     IdentityAgent $LOCAL_SSH_AUTH_SOCK
 	ForwardAgent {{ sca_auth_sock }}
 
-Host *_sss
+Host *_sca
     #IdentityAgent $SCA_SSH_AUTH_SOCK
 	IdentityAgent {{ sca_auth_sock }}
 	ForwardAgent {{ sca_auth_sock }}
