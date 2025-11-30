@@ -2,28 +2,33 @@
 
 This repository contains the public SSH Central Agent (SCA) configuration. Host configurations are stored separately in a private repository to keep sensitive information secure.
 
-## Initial Setup
+## Initial Setup (with a private hosts repository)
 
-### For New Users
+### Initialize the repositories
 
-1. **Clone the public repository:**
+1. **Clone the parent repository with submodules** (recommended):
    ```bash
+   mkdir -p ~/sca
    cd ~/sca
-   git clone git@github.com:styliteag/ssh-central-agent.git
-   cd ssh-central-agent
+   git clone git@github.com:styliteag/ssh-central-agent.git ssh-central-agent
+   git clone ssh://git@git-yourdomain.com/your-project/ssh-central-agent-hosts.git ssh-central-agent-hosts
    ```
 
-2. **Set up the hosts directory** (choose one option):
-
-   **Option A: Clone the private hosts repository** (if you have access):
+   If you already cloned without submodules, initialize them:
    ```bash
    cd ~/sca
-   git clone git@github.com:styliteag/sca-private-hosts.git
-   cd ssh-central-agent
-   ln -s ../sca-private-hosts hosts
+   git submodule update --init --recursive
    ```
 
-   **Option B: Create an empty hosts directory** (if you don't have access or want to start fresh):
+2. **Set up the hosts symlink**:
+   
+   The `ssh-central-agent-hosts` submodule is located at the repository root. Create a symlink from `ssh-central-agent/hosts` to the submodule:
+   ```bash
+   cd ~/sca/ssh-central-agent
+   ln -s ../ssh-central-agent-hosts hosts
+   ```
+
+   **Note**: If you don't have access to the private hosts repository, you can create an empty directory instead:
    ```bash
    cd ~/sca/ssh-central-agent
    mkdir hosts
@@ -31,6 +36,7 @@ This repository contains the public SSH Central Agent (SCA) configuration. Host 
 
 3. **Run the Ansible playbook:**
    ```bash
+   cd ~/sca/ssh-central-agent
    ansible-playbook playbook.yml
    ```
 
@@ -40,33 +46,46 @@ After setup, your `~/sca` directory should look like this:
 
 ```
 ~/sca/
-├── ssh-central-agent/          # Public repo (this repository)
-│   ├── hosts -> ../sca-private-hosts/  # Symlink (if using private repo)
-│   │   OR
-│   ├── hosts/                  # Empty directory (if starting fresh)
+├── ssh-central-agent/              # Public repo (this repository)
+│   ├── hosts -> ../ssh-central-agent-hosts/  # Symlink to submodule
 │   ├── playbook.yml
 │   ├── templates/
 │   └── ...
-└── sca-private-hosts/          # Private repo (optional, host configurations)
-    ├── intern
-    ├── kunde1
+└── ssh-central-agent-hosts/        # Private repo submodule (host configurations)
+    ├── bonis
+    ├── caritas
     ├── dev
     └── ...
 ```
 
 ## Updating
 
-### Update Public Repository
+### Update All Repositories (Parent + Submodules)
+```bash
+cd ~/sca
+git pull
+git submodule update --remote --merge
+cd ssh-central-agent
+ansible-playbook playbook.yml
+```
+
+### Update Public Repository Only
 ```bash
 cd ~/sca/ssh-central-agent
 git pull
 ansible-playbook playbook.yml
 ```
 
-### Update Private Hosts
+### Update Private Hosts Submodule Only
 ```bash
-cd ~/sca/sca-private-hosts
+cd ~/sca/ssh-central-agent-hosts
 git pull
+```
+
+Or update from the parent repository:
+```bash
+cd ~/sca
+git submodule update --remote ssh-central-agent-hosts
 ```
 
 ## Notes
@@ -75,3 +94,4 @@ git pull
 - Always use a symlink - never copy the hosts directory
 - The symlink approach allows the playbook to work without any code changes
 - Both repositories can be updated independently
+- Use `git submodule update --init --recursive` if submodules weren't initialized during clone
