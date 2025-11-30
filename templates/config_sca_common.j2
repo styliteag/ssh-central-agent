@@ -1,0 +1,15 @@
+# Common Settings for All host which go over the Jumphost
+KbdInteractiveAuthentication no
+TCPKeepAlive yes
+
+#IdentityAgent {{ sss_auth_sock }}
+### ForwardAgent {{ sss_auth_sock }}
+IdentityAgent {{ mux_auth_sock }}
+### ForwardAgent {{ mux_auth_sock }}
+
+### ProxyJump sca-jump_org
+### ProxyCommand ssh -W [%h]:%p sca-jump_org
+###
+### First Try Direct: "socat 2>/dev/null - tcp4:%h:%p,connect-timeout=0.1"
+### ProxyCommand sh -c "socat 2>/dev/null - tcp4:%h:%p,connect-timeout=0.1 || ssh -W '[%h]:%p' sca-jump_org 2>/dev/null || ssh -W '[%h]:%p' sca-jump 2>/dev/null || ssh -W '[%h]:%p' sca-jump_local 2>/dev/null"
+ProxyCommand sh -c "socat 2>/dev/null - tcp4:%h:%p,connect-timeout=0.1 || ssh -W '[%h]:%p' sca-jump 2>/dev/null"

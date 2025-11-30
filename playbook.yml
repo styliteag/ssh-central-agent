@@ -1,0 +1,116 @@
+#!/usr/bin/env -S ansible-playbook -D
+---
+- name: Playbook
+  hosts: localhost
+  become: no
+  vars:
+    # Defaults, can be overwriting by creating a localvars.yml file here
+    remote_username: change_in_localvars_yml
+    # my_ssh_key ist unsued at the Moment 
+    my_ssh_key: ~/.ssh/id_unused
+    ssh_config_file: config
+    bindir: /usr/local/bin
+    # Do we need sudo to copy to bindir?
+    bindir_become: False
+    sca_auth_sock: ~/.ssh/scadev-agent.sock
+    mux_auth_sock: ~/.ssh/scadev-mux.sock
+    command_sca: sca
+    #command_sssssh: ssssh
+  tasks:
+  - name: Include Local Vars, overwriting defaults if the user has some
+    include_vars: ./localvars.yml
+    when: "'./localvars.yml' is file" 
+  - name: Create Local sca
+    template:
+      src: sca.j2
+      dest: "./{{ command_sca }}"
+      mode: u=rwx,g=rx,o=rx
+  - name: Update .zshrc
+    ignore_errors: true
+    blockinfile:
+      path: ~/.zshrc
+      backup: yes
+      create: no
+      marker: "# {mark} (sca-ssh-gateway) ANSIBLE MANAGED BLOCK"
+      block: |
+        # Handle sca Subshell for ssh-ssh-gateway
+        if [ -n "$SCA_SUBSHELL" ] ; then
+          echo "SCA_SUBSHELL: $SCA_SUBSHELL"
+          #PROMPT="($SCA_SUBSHELL)$PROMPT"
+          #PROMPT="$PROMPT($SCA_SUBSHELL) "
+          PS1="$PS1($SCA_SUBSHELL) "
+          if [ -n "$MUX_SSH_AUTH_SOCK" ] ; then
+            export SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK
+          elif [ -n "$SCA_SSH_AUTH_SOCK" ] ; then
+            export SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK
+          fi
+        else
+          export LOCAL_SSH_AUTH_SOCK=$SSH_AUTH_SOCK
+          #echo "SSH-ADD"
+          #/usr/bin/ssh-add -A
+        fi
+  - name: Update .bashrc
+    ignore_errors: true
+    blockinfile:
+      path: ~/.bashrc
+      backup: yes
+      create: no
+      marker: "# {mark} (sca-ssh-gateway) ANSIBLE MANAGED BLOCK"
+      block: |
+        # Handle sca Subshell for ssh-ssh-gateway
+        if [ -n "$SCA_SUBSHELL" ] ; then
+          echo "SCA_SUBSHELL: $SCA_SUBSHELL"
+          #PROMPT="($SCA_SUBSHELL)$PROMPT"
+          #PROMPT="$PROMPT($SCA_SUBSHELL) "
+          PS1="$PS1($SCA_SUBSHELL) "
+          if [ -n "$MUX_SSH_AUTH_SOCK" ] ; then
+            export SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK
+          elif [ -n "$SCA_SSH_AUTH_SOCK" ] ; then
+            export SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK
+          fi
+        else
+          export LOCAL_SSH_AUTH_SOCK=$SSH_AUTH_SOCK
+          #echo "SSH-ADD"
+          #/usr/bin/ssh-add -A
+        fi
+  - name: Place our command in the Path as "sca"
+    become: "{{ bindir_become }}"
+    file:
+      src: "{{ playbook_dir }}/sca"
+      dest: "{{ bindir }}/{{ command_sca }}"
+      state: link
+      force: yes
+  - name: Create Local SSH config File
+    template:
+      src: config.j2
+      dest: "./{{ ssh_config_file }}_single"
+  - name: Create Local SSH config File
+    template:
+      src: config.j2
+      dest: "./{{ ssh_config_file }}"
+  - name: Create Local SSH config_sca_common File
+    template:
+      src: config_sca_common.j2
+      dest: "~/.ssh/config_sca_common"
+  - name: Remove Include from {{ ssh_config_file }}_single
+    lineinfile:
+      path: "./{{ ssh_config_file }}_single"
+      regexp: '^(Include .*)$'
+      line: '## \1'
+      backrefs: yes
+  - name: Make sure the config File is included in ~/.ssh/config
+    lineinfile:
+      path: ~/.ssh/config
+      line: "Include {{ playbook_dir }}/hosts/*"
+      insertbefore: BOF
+      #insertbefore: "^Host "
+      #firstmatch: yes
+      create: yes
+  - name: Make sure the config_single File is included in ~/.ssh/config
+    # The Include must be before the Hosts
+    lineinfile:
+      path: ~/.ssh/config
+      line: "Include {{ playbook_dir }}/{{ ssh_config_file }}_single"
+      insertbefore: BOF
+      #insertbefore: "^Host "
+      #firstmatch: yes

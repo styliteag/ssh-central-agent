@@ -1,0 +1,23 @@
+# Set to your Username on the remote servers
+remote_username: CHANGE_ME
+
+# Unused at the Moment
+#my_ssh_key: ~/.ssh/id_xx_sk
+
+# File to change in ~/.ssh/ 
+#ssh_config_file: config
+
+# How is the "sca" binary named
+#command_sca: sca
+
+# Where to write "sca" binary
+#bindir: /usr/local/bin
+# Do we need sudo to copy to bindir?
+#bindir_become: False
+
+#In Linux you maybe need this:
+#bindir: /usr/bin
+#bindir_become: True
+
+#sca_auth_sock: /tmp/scadev-agent.sock
+#mux_auth_sock: /tmp/scadev-mux.sock

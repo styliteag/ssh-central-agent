@@ -1,4 +1,4 @@
-# SSH Secure Gateway (SCA)
+# SSH Central Agent (SCA)
 
 **SCA** stands for **SSH Central Agent** - a sophisticated SSH gateway system that provides secure, multi-level SSH access to remote hosts through a centralized jump host infrastructure.
 

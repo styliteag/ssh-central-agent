@@ -1,0 +1,9 @@
+config
+sca
+scassh
+config_main
+config_single
+localvars.yml
+*.bak
+.vscode/
+.DS_Store

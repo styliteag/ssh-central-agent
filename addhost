@@ -1,0 +1,34 @@
+#!/usr/bin/env -S bash
+
+
+# Check if arguments are provided
+if [ $# -eq 0 ]; then
+    echo "Usage: addhost [file,default=kunden] name [ip,default=name] [port,default=22] [user,default=root]"
+    exit 1
+fi
+
+FILE=kunden
+if [ -w hosts/$1 ] ; then
+  FILE=$1
+  shift
+fi
+
+HOST="${1}"
+HOSTNAME="${2:-$HOST}"
+PORT="${3:-22}"
+USER="${4:-root}"
+
+echo "Adding to hosts/$FILE"
+tee -a hosts/$FILE <<EOF
+#
+# Autoadded $FILE $HOST $IP $PORT $USER
+Host $HOST sca-${HOST} 
+    #sca-${HOST}_my sca-${HOST}_local sca-${HOST}_direct sca-${HOST}_org sca-${HOST}_mux
+    user $USER
+    hostname $HOSTNAME
+    port $PORT
+    #ProxyJump sca-xxx
+    #ProxyJump none
+    include ~/.ssh/config_sca_common
+
+EOF
