@@ -7,3 +7,4 @@ localvars.yml
 *.bak
 .vscode/
 .DS_Store
+hosts/

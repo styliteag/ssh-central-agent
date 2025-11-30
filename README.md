@@ -91,6 +91,8 @@ ssh-add ~/.ssh/id_ed25519
 
 ### Installation
 
+**First-time setup:** See [SETUP.md](SETUP.md) for instructions on setting up the private hosts repository.
+
 Run the Ansible playbook to set up the system:
 
 ```bash
