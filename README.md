@@ -91,18 +91,41 @@ ssh-add ~/.ssh/id_ed25519
 
 ### Installation
 
-**First-time setup:** See [SETUP.md](SETUP.md) for instructions on setting up the private hosts repository.
+**Recommended location:** Check out the repository in `~/.ssh/sca`. The playbook will adapt to any location, but `~/.ssh/sca` is the recommended path.
 
-Run the Ansible playbook to set up the system:
+**First-time setup:**
 
-```bash
-ansible-playbook playbook.yml
-```
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/styliteag/ssh-central-agent ~/.ssh/sca
+   # or git clone https://github.com/styliteag/ssh-central-agent ~/.ssh/sca
+   ```
 
-This will:
-- Generate the `sca` (SSH Central Agent) script from templates
-- Create SSH configuration files
-- Set up shell integration (.bashrc/.zshrc)
+2. **Create the hosts directory:**
+   After checkout, create a `hosts` directory. This can be:
+   - A symlink to another private repository (recommended for team setups)
+   - An empty directory (if you don't have access to the private hosts repo yet)
+   - A separate private git repository
+   
+   ```bash
+   # Option 1: Create empty directory
+   mkdir hosts
+   
+   # Option 2: Clone private repo as hosts directory
+   git clone <private-hosts-repo-url> hosts
+   ```
+
+3. **Run the Ansible playbook:**
+   ```bash
+   ansible-playbook playbook.yml
+   ```
+
+   This will:
+   - Generate the `sca` (SSH Central Agent) script from templates
+   - Create SSH configuration files
+   - Set up shell integration (.bashrc/.zshrc)
+
+**Note:** The playbook automatically adapts to wherever you've checked out the repository. See [SETUP.md](SETUP.md) for detailed setup instructions.
 
 ### Usage
 
