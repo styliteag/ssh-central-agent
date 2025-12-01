@@ -322,102 +322,131 @@ wait_for_socket() {
 # COMMAND-LINE ARGUMENT PARSING
 #==============================================================================
 
-while getopts ":l:hwdr-:" opt; do
-  case $opt in
-    -)
-      case "${OPTARG}" in
-        help)
-          echo $HELP >&2
-          shift
-          exit 1
-          ;;
-        level)
-          val="${!OPTIND}"
-          OPTIND=$(( $OPTIND + 1 ))
-          log_debug "Parsing option: '--${OPTARG}', value: '${val}'"
-          LEVEL=$val
-          ;;
-        level=*)
-          val=${OPTARG#*=}
-          log_debug "Parsing option: '--level', value: '${val}'"
-          LEVEL=$val
-          ;;
-        debug)
-          log_debug "Parsing option: '--${OPTARG}'"
-          DEBUG=1
-          ;;
-        reverse)
-          log_debug "Parsing option: '--${OPTARG}'"
-          REVERSE=1
-          ;;
-        key=local)
-          log_debug "Parsing option: '--key', value: 'local'"
-          KEY=local
-          ;;
-        key=remote)
-          log_debug "Parsing option: '--key', value: 'remote'"
-          KEY=remote
-          ;;
-        mux=*)
-          val=${OPTARG#*=}
-          log_debug "Parsing option: '--mux', value: '${val}'"
-          MUX_TYPE=$val
-          ;;
-        find|add|list)
-          val="${!OPTIND}"
-          OPTIND=$(( $OPTIND + 1 ))
-          log_debug "Parsing option: '--${OPTARG}', value: '${val}'"
-          shift # Remove --$val from processing
-          shift # Remove $val
-          do_cmd $val "$*"
-          exit 1
-          ;;
-        connect)
-          val="${!OPTIND}"
-          log_debug "Parsing option: '--${OPTARG}', value: '$val'"
-          connect $val
-          ;;
-        wait)
-          log_debug "Parsing option: '--${OPTARG}'"
-          WAIT=1
-          ;;
-        kill)
-          log_debug "Parsing option: '--${OPTARG}'"
-          log_info "Killing all agents and remote connections..."
-          
-          log_info "Killing remote agent (ssh with ragent)"
-          pkill -f " ragent "
-          
-          log_info "Killing Python multiplexer (sshagentmux.py)"
-          pkill -f "sshagentmux.py"
-          
-          log_info "Removing socket files"
-          rm -f {{ sca_auth_sock }}
-          rm -f {{ mux_auth_sock }}
-          
-          log_success "All agents and connections killed"
-          exit 0
-          ;;
-        *)
-          if [ "$OPTERR" = 1 ] && [ "${optspec:0:1}" != ":" ]; then
-            echo "Unknown option --${OPTARG}" >&2
+# Parse arguments manually for cleaner handling of both short and long options
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help)
+      echo "$HELP" >&2
+      exit 1
+      ;;
+    -d|--debug)
+      DEBUG=1
+      shift
+      ;;
+    -r|--reverse)
+      REVERSE=1
+      shift
+      ;;
+    -w|--wait)
+      WAIT=1
+      shift
+      ;;
+    -l|--level)
+      if [ -z "$2" ]; then
+        log_error "Option $1 requires an argument"
+        exit 1
+      fi
+      LEVEL="$2"
+      shift 2
+      ;;
+    --level=*)
+      LEVEL="${1#*=}"
+      shift
+      ;;
+    --key=local)
+      KEY=local
+      shift
+      ;;
+    --key=remote)
+      KEY=remote
+      shift
+      ;;
+    --mux=*)
+      MUX_TYPE="${1#*=}"
+      shift
+      ;;
+    --list)
+      do_cmd "list"
+      exit 1
+      ;;
+    --find|--add)
+      CMD_NAME="${1#--}"
+      if [ -z "$2" ]; then
+        log_error "Option $1 requires an argument"
+        exit 1
+      fi
+      do_cmd "$CMD_NAME" "$2"
+      exit 1
+      ;;
+    --connect)
+      if [ -z "$2" ]; then
+        log_error "Option $1 requires an argument"
+        exit 1
+      fi
+      connect "$2"
+      shift 2
+      ;;
+    --kill)
+      log_info "Killing all agents and remote connections..."
+      log_info "Killing remote agent (ssh with ragent)"
+      pkill -f " ragent "
+      log_info "Killing Python multiplexer (sshagentmux.py)"
+      pkill -f "sshagentmux.py"
+      log_info "Removing socket files"
+      rm -f {{ sca_auth_sock }}
+      rm -f {{ mux_auth_sock }}
+      log_success "All agents and connections killed"
+      exit 0
+      ;;
+    --*)
+      log_error "Unknown option: $1"
+      exit 1
+      ;;
+    -*)
+      # Handle short options that can be combined (e.g., -dr)
+      OPTARG="${1#-}"
+      while [ -n "$OPTARG" ]; do
+        case "${OPTARG:0:1}" in
+          h)
+            echo "$HELP" >&2
             exit 1
-          fi
-          ;;
-      esac ;;
-    l) LEVEL=$OPTARG ;;
-    d) DEBUG=1 ;;
-    r) REVERSE=1 ;;
-    w) WAIT=1 ;;
-    h) echo $HELP >&2; exit 1 ;;
-    \?) echo "Invalid option -$OPTARG" >&2; exit 1 ;;
-    :) echo "Option -$OPTARG requires an argument." >&2; exit 1 ;;
+            ;;
+          d)
+            DEBUG=1
+            OPTARG="${OPTARG#?}"
+            ;;
+          r)
+            REVERSE=1
+            OPTARG="${OPTARG#?}"
+            ;;
+          w)
+            WAIT=1
+            OPTARG="${OPTARG#?}"
+            ;;
+          l)
+            if [ -z "$2" ]; then
+              log_error "Option -l requires an argument"
+              exit 1
+            fi
+            LEVEL="$2"
+            shift
+            OPTARG=""
+            ;;
+          *)
+            log_error "Unknown option: -${OPTARG:0:1}"
+            exit 1
+            ;;
+        esac
+      done
+      shift
+      ;;
+    *)
+      # Non-option argument - remaining args are the command
+      CMD="$*"
+      break
+      ;;
   esac
 done
-shift $((OPTIND -1))
-
-# Capture remaining arguments as command (after options have been parsed and shifted)
-CMD=$*
 
 # Set up exit trap for cleanup
 SCA_EXITING=false

@@ -51,13 +51,14 @@ connect() {
 }
 
 do_cmd() {
-    echo "CMD: $OPTARG" >&2
-    echo "ARGS: $*" >&2
-    CMD=$OPTARG
-    ARGS=$*
+    CMD="$1"
+    shift
+    ARGS="$*"
+    echo "CMD: $CMD" >&2
+    echo "ARGS: $ARGS" >&2
     # Is function $CMD defined?
-    if type $CMD >/dev/null 2>&1; then
-      $CMD $ARGS
+    if type "$CMD" >/dev/null 2>&1; then
+      "$CMD" $ARGS
     else
       echo "Command $CMD not found" >&2
     fi
