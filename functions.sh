@@ -15,7 +15,7 @@
 # limitations under the License.
 
 #####################
-# Funtions
+# Functions
 #####################
 
 list() {
@@ -30,13 +30,8 @@ find() {
 }
 
 add() {
-  echo "Adding Host: $1" >&2
-  echo "Add is broken right now" >&2
-  echo "Use addhost instead" >&2
-  #pushd $PLAYBOOK_DIR
-  #./addhost $*
-  #popd
-  exit 1
+  echo "Adding Host: $*" >&2
+  (cd "$PLAYBOOK_DIR" && ./addhost "$@")
 }
 
 connect() {

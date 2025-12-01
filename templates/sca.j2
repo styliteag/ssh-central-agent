@@ -69,58 +69,38 @@ HELP="Usage: $0 [-d|-debug] [-r|--reverse] [-h|--help] [-l|--level LEVEL] --key=
 # HELPER FUNCTIONS
 #==============================================================================
 
-# Color support - check if colors should be enabled
-USE_COLORS=false
-if [ -t 1 ] && [ -t 2 ] && [ -z "${NO_COLOR:-}" ] && command -v tput >/dev/null 2>&1; then
-    USE_COLORS=true
-fi
-
-# Color codes (only set if colors are enabled)
-if [ "$USE_COLORS" == "true" ]; then
-    COLOR_RESET=$(tput sgr0)
-    COLOR_BOLD=$(tput bold)
-    COLOR_RED=$(tput setaf 1)
-    COLOR_GREEN=$(tput setaf 2)
-    COLOR_YELLOW=$(tput setaf 3)
-    COLOR_BLUE=$(tput setaf 4)
-    COLOR_MAGENTA=$(tput setaf 5)
-    COLOR_CYAN=$(tput setaf 6)
-else
-    COLOR_RESET=""
-    COLOR_BOLD=""
-    COLOR_RED=""
-    COLOR_GREEN=""
-    COLOR_YELLOW=""
-    COLOR_BLUE=""
-    COLOR_MAGENTA=""
-    COLOR_CYAN=""
-fi
+# Color helper function
+color() {
+    if [ -t 1 ] && [ -t 2 ] && [ -z "${NO_COLOR:-}" ] && command -v tput >/dev/null 2>&1; then
+        tput "$@"
+    fi
+}
 
 # Logging functions with colors
 log_error() {
-    echo "${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}$*${COLOR_RESET}" >&2
+    echo "$(color setaf 1)$(color bold)ERROR:$(color sgr0) $(color setaf 1)$*$(color sgr0)" >&2
 }
 
 log_warn() {
-    echo "${COLOR_YELLOW}${COLOR_BOLD}WARNING:${COLOR_RESET} ${COLOR_YELLOW}$*${COLOR_RESET}" >&2
+    echo "$(color setaf 3)$(color bold)WARNING:$(color sgr0) $(color setaf 3)$*$(color sgr0)" >&2
 }
 
 log_info() {
-    echo "${COLOR_BLUE}${COLOR_BOLD}INFO:${COLOR_RESET} ${COLOR_BLUE}$*${COLOR_RESET}" >&2
+    echo "$(color setaf 4)$(color bold)INFO:$(color sgr0) $(color setaf 4)$*$(color sgr0)" >&2
 }
 
 log_success() {
-    echo "${COLOR_GREEN}${COLOR_BOLD}✓${COLOR_RESET} ${COLOR_GREEN}$*${COLOR_RESET}" >&2
+    echo "$(color setaf 2)$(color bold)✓$(color sgr0) $(color setaf 2)$*$(color sgr0)" >&2
 }
 
 log_debug() {
     if [ "${DEBUG:-0}" == "1" ]; then
-        echo "${COLOR_MAGENTA}${COLOR_BOLD}DEBUG:${COLOR_RESET} ${COLOR_MAGENTA}$*${COLOR_RESET}" >&2
+        echo "$(color setaf 5)$(color bold)DEBUG:$(color sgr0) $(color setaf 5)$*$(color sgr0)" >&2
     fi
 }
 
 log_note() {
-    echo "${COLOR_CYAN}${COLOR_BOLD}NOTE:${COLOR_RESET} ${COLOR_CYAN}$*${COLOR_RESET}" >&2
+    echo "$(color setaf 6)$(color bold)NOTE:$(color sgr0) $(color setaf 6)$*$(color sgr0)" >&2
 }
 
 # Cleanup function for background processes
@@ -206,8 +186,8 @@ check_ssh_agent_running() {
 # Display harmless error note for ssh-agent-mux
 show_harmless_error_note() {
     log_note "You can safely ignore these harmless errors:"
-    echo "  ${COLOR_YELLOW}-${COLOR_RESET} 'ERROR [ssh_agent_mux] Unexpected error on socket ... when requesting session-bind@openssh.com extension: Agent: Protocol error: Unexpected response received'" >&2
-    echo "  ${COLOR_YELLOW}-${COLOR_RESET} 'ERROR [ssh_agent_lib::agent] Error handling message: Failure'" >&2
+    echo "  $(color setaf 3)-$(color sgr0) 'ERROR [ssh_agent_mux] Unexpected error on socket ... when requesting session-bind@openssh.com extension: Agent: Protocol error: Unexpected response received'" >&2
+    echo "  $(color setaf 3)-$(color sgr0) 'ERROR [ssh_agent_lib::agent] Error handling message: Failure'" >&2
 }
 
 # Find identity file in common locations
@@ -714,10 +694,10 @@ if [ "$MY_SOCKS_WORKING" == "false" ]; then
            if [ -f "$MACOS_LOG_FILE" ]; then
                 log_info "ssh-agent-mux logs: $MACOS_LOG_FILE"
                 show_harmless_error_note
-                echo "${COLOR_CYAN}--- Recent log entries (filtered) ---${COLOR_RESET}" >&2
+                echo "$(color setaf 6)--- Recent log entries (filtered) ---$(color sgr0)" >&2
                 # Filter out harmless errors from ssh-agent-mux
                 tail -n 50 "$MACOS_LOG_FILE" | grep -vE "ERROR \[ssh_agent_lib::agent\] Error handling message: Failure|ERROR \[ssh_agent_mux\] Unexpected error on socket.*when requesting session-bind@openssh.com extension.*Protocol error.*Unexpected response received" | tail -n 10 >&2
-                echo "${COLOR_CYAN}--- Tailing logs (filtered, PID will be cleaned up on exit) ---${COLOR_RESET}" >&2
+                echo "$(color setaf 6)--- Tailing logs (filtered, PID will be cleaned up on exit) ---$(color sgr0)" >&2
                 # Filter out harmless errors while tailing
                 tail -Fq "$MACOS_LOG_FILE" 2>&1 | grep -vE "ERROR \[ssh_agent_lib::agent\] Error handling message: Failure|ERROR \[ssh_agent_mux\] Unexpected error on socket.*when requesting session-bind@openssh.com extension.*Protocol error.*Unexpected response received" >&2 &
                 TAIL_LOG_PID=$!
@@ -730,10 +710,10 @@ if [ "$MY_SOCKS_WORKING" == "false" ]; then
            # Display logs with filtering for Linux systemd service
            log_info "ssh-agent-mux logs (Linux systemd):"
            show_harmless_error_note
-           echo "${COLOR_CYAN}--- Recent log entries (filtered) ---${COLOR_RESET}" >&2
+           echo "$(color setaf 6)--- Recent log entries (filtered) ---$(color sgr0)" >&2
            # Filter out harmless errors from recent logs
            journalctl --user -u ssh-agent-mux -n 50 --no-pager 2>/dev/null | grep -vE "ERROR \[ssh_agent_lib::agent\] Error handling message: Failure|ERROR \[ssh_agent_mux\] Unexpected error on socket.*when requesting session-bind@openssh.com extension.*Protocol error.*Unexpected response received" | tail -n 10 >&2
-           echo "${COLOR_CYAN}--- Tailing logs (filtered, PID will be cleaned up on exit) ---${COLOR_RESET}" >&2
+           echo "$(color setaf 6)--- Tailing logs (filtered, PID will be cleaned up on exit) ---$(color sgr0)" >&2
            # Filter out harmless errors while tailing
            journalctl --user -u ssh-agent-mux -f 2>&1 | grep -vE "ERROR \[ssh_agent_lib::agent\] Error handling message: Failure|ERROR \[ssh_agent_mux\] Unexpected error on socket.*when requesting session-bind@openssh.com extension.*Protocol error.*Unexpected response received" >&2 &
            TAIL_LOG_PID=$!
