@@ -71,7 +71,7 @@ HELP="Usage: $0 [-d|-debug] [-r|--reverse] [-h|--help] [-l|--level LEVEL] --key=
 
 # Color helper function
 color() {
-    if [ -t 1 ] && [ -t 2 ] && [ -z "${NO_COLOR:-}" ] && command -v tput >/dev/null 2>&1; then
+    if [ -t 2 ] && [ -z "${NO_COLOR:-}" ] && command -v tput >/dev/null 2>&1; then
         tput "$@"
     fi
 }
