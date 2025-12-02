@@ -50,7 +50,7 @@ readonly SOCKET_WAIT_DELAY=0.1           # Delay between socket checks (seconds)
 # Default values
 LEVEL=$MAX_LEVEL            # Maximum security level to try
 REVERSE=0                   # Reverse agent order when multiplexing
-MUX_TYPE="auto"             # Multiplexer type: auto, python, rust
+MUX_TYPE="python"           # Multiplexer type: python (default), rust
 CHECK_SECONDS=30            # Seconds between connection checks in wait mode
 
 # Runtime variables
@@ -63,7 +63,7 @@ ORG_SSH_AUTH_SOCK=$SSH_AUTH_SOCK
 # Include helper functions
 source $PLAYBOOK_DIR/functions.sh
 
-HELP="Usage: $0 [-d|-debug] [-r|--reverse] [-h|--help] [-l|--level LEVEL] --key=local|remote [--mux=auto|python|rust] [--find|--add|--list] [-w|--wait] [--kill] [--connect [user@]host] command"
+HELP="Usage: $0 [-d|-debug] [-r|--reverse] [-h|--help] [-l|--level LEVEL] --key=local|remote [--mux=python|rust] [--find|--add|--list] [-w|--wait] [--kill] [--connect [user@]host] command"
 
 #==============================================================================
 # HELPER FUNCTIONS
@@ -588,13 +588,7 @@ if [ "$MY_SOCKS_WORKING" == "false" ]; then
   else
     log_info "Muxing the 2 Agents to one"
     USE_RUST_MUX=false
-    if [ "$MUX_TYPE" == "rust" ]; then
-        USE_RUST_MUX=true
-    elif [ "$MUX_TYPE" == "auto" ]; then
-        if command -v ssh-agent-mux >/dev/null 2>&1; then
-            USE_RUST_MUX=true
-        fi
-    fi
+    [ "$MUX_TYPE" = "rust" ] && USE_RUST_MUX=true
   fi
 
   # Set up multiplexer (only if not skipping)

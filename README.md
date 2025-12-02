@@ -150,8 +150,20 @@ The system includes its own SSH agent multiplexer implementation (`sshagentmux.p
 ### Option 1: Built-in Python Multiplexer (Default)
 The project includes `sshagentmux.py`, a Python-based SSH agent multiplexer that combines your local and remote SSH agents. This is the default implementation and requires no additional dependencies beyond Python.
 
-### Option 2: ssh-agent-mux (Optional, Recommended)
-If [ssh-agent-mux](https://github.com/overhacked/ssh-agent-mux) is installed, the system will automatically detect and use it. This Rust-based multiplexer offers better performance and is recommended for production use. 
+### Option 2: ssh-agent-mux (Optional, Explicit Opt-In)
+If [ssh-agent-mux](https://github.com/overhacked/ssh-agent-mux) is installed, you can choose to use it explicitly via:
+
+```bash
+sca --mux=rust
+```
+
+This Rust-based multiplexer offers better performance, but it is **not** compatible with some older or non-standard SSH implementations (for example certain Sophos appliances). In those cases you may see errors like:
+
+```text
+[ssh_agent_lib::agent] Error handling message: Proto(SshKey(Encoding(Length)))
+```
+
+If you encounter such errors, switch back to the default Python multiplexer (no `--mux` flag, or `--mux=python`) and consider reporting the issue upstream to the `ssh-agent-mux` project to see if they can improve compatibility.
 
 **Installation:**
 ```bash
