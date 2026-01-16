@@ -135,12 +135,45 @@ Start a shell with access to remote keys using the SSH Central Agent:
 sca
 ```
 
-Common commands:
+Or use `eval \`sca -s\`` to set the SSH agent in your current shell (similar to `ssh-agent -s`):
+
 ```bash
-sca --list              # List configured hosts
-sca --find hostname     # Find a specific host
-sca --wait              # Run in background and monitor
-sca --kill              # Kill all agents and connections
+eval `sca -s --key=local`
+# Now SSH_AUTH_SOCK is set in your current shell
+ssh-add -l  # List available keys
+```
+
+### Command Options
+
+**Basic Usage:**
+```bash
+sca --key=local         # Start subshell with local key
+sca --key=remote        # Start subshell with remote key
+```
+
+**Host Management:**
+```bash
+sca --list              # List all configured hosts
+sca --find hostname     # Find and display information about a specific host
+sca --add hostname      # Add a new host to the configuration
+sca --connect [user@]host  # Connect to a specific host
+```
+
+**Advanced Options:**
+```bash
+sca -s --key=local      # Output env vars for eval (use with eval \`sca -s --key=local\`)
+sca --wait              # Run in background and monitor connection, restart if needed
+sca --kill              # Kill all agents and connections, remove socket files
+sca -d                  # Enable debug mode (verbose output)
+sca -r                  # Reverse the order of agents when multiplexing
+sca -l 2                # Set security level (0-3, default: auto-detect)
+sca --mux=rust          # Use Rust multiplexer instead of Python (default)
+```
+
+**Combined Options:**
+```bash
+sca -dr --key=local     # Debug mode + reverse agent order
+sca --wait --key=local  # Background monitoring mode
 ```
 
 ## SSH Agent Multiplexing
