@@ -18,6 +18,92 @@
 # Functions
 #####################
 
+# Color helper function
+color() {
+    if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && command -v tput >/dev/null 2>&1; then
+        tput "$@"
+    fi
+}
+
+# Color codes for syntax highlighting
+color_reset() {
+    color sgr0
+}
+
+color_host() {
+    color setaf 4  # Blue
+    color bold
+}
+
+color_directive() {
+    color setaf 6  # Cyan
+}
+
+color_value() {
+    color setaf 3  # Yellow
+}
+
+color_comment() {
+    # Try gray (8), fallback to dim white (7)
+    if color setaf 8 >/dev/null 2>&1; then
+        color setaf 8
+    else
+        color setaf 7
+        color dim
+    fi
+}
+
+color_file_header() {
+    color setaf 5  # Magenta
+    color dim
+}
+
+# Syntax highlight a line of SSH config
+highlight_line() {
+    local line="$1"
+
+    # Host or Match directive (bold blue for keyword, yellow for values)
+    if [[ "$line" =~ ^([[:space:]]*)(Host|Match)[[:space:]]+(.+)$ ]]; then
+        local indent="${BASH_REMATCH[1]}"
+        local keyword="${BASH_REMATCH[2]}"
+        local values="${BASH_REMATCH[3]}"
+        printf "%s%s%s%s %s%s%s\n" \
+            "$indent" \
+            "$(color_host)" \
+            "$keyword" \
+            "$(color_reset)" \
+            "$(color_value)" \
+            "$values" \
+            "$(color_reset)"
+        return
+    fi
+
+    # Comment lines (gray/dim)
+    if [[ "$line" =~ ^[[:space:]]*# ]]; then
+        printf "%s%s%s\n" "$(color_comment)" "$line" "$(color_reset)"
+        return
+    fi
+
+    # Directives with values (cyan directive, yellow value)
+    if [[ "$line" =~ ^([[:space:]]+)([A-Za-z][A-Za-z0-9]*)[[:space:]]+(.+)$ ]]; then
+        local indent="${BASH_REMATCH[1]}"
+        local directive="${BASH_REMATCH[2]}"
+        local value="${BASH_REMATCH[3]}"
+        printf "%s%s%s%s %s%s%s\n" \
+            "$indent" \
+            "$(color_directive)" \
+            "$directive" \
+            "$(color_reset)" \
+            "$(color_value)" \
+            "$value" \
+            "$(color_reset)"
+        return
+    fi
+
+    # Default: just print the line
+    printf "%s\n" "$line"
+}
+
 list() {
   echo "## Listing Hosts" >&2
   cat $PLAYBOOK_DIR/hosts/*
@@ -27,7 +113,7 @@ find() {
   local hostname="$1"
   local config_file="$PLAYBOOK_DIR/config"
   local hosts_dir="$PLAYBOOK_DIR/hosts"
-  local output_file=$(mktemp)
+  local found_any=false
   
   echo "Searching for host: $hostname" >&2
   
@@ -42,7 +128,7 @@ find() {
     while [ $start_line -gt 0 ]; do
       local line_content=$(sed -n "${start_line}p" "$file" 2>/dev/null)
       # Check if this line starts with "Host " (with space) or "Match " (with space)
-      if echo "$line_content" | grep -qiE "^\s*(Host |Match )"; then
+      if echo "$line_content" | grep -qiE "^[[:space:]]*(Host|Match)[[:space:]]"; then
         break
       fi
       start_line=$((start_line - 1))
@@ -55,7 +141,7 @@ find() {
     
     local host_line_content=$(sed -n "${start_line}p" "$file" 2>/dev/null)
     # Verify it's actually a Host or Match line with space
-    if ! echo "$host_line_content" | grep -qiE "^\s*(Host |Match )"; then
+    if ! echo "$host_line_content" | grep -qiE "^[[:space:]]*(Host|Match)[[:space:]]"; then
       return 1
     fi
     
@@ -67,7 +153,7 @@ find() {
     while [ $next_line -le $total_lines ]; do
       local line_content=$(sed -n "${next_line}p" "$file" 2>/dev/null)
       # Check if this line starts a new Host or Match block (with space)
-      if echo "$line_content" | grep -qiE "^\s*(Host |Match )"; then
+      if echo "$line_content" | grep -qiE "^[[:space:]]*(Host|Match)[[:space:]]"; then
         end_line=$((next_line - 1))
         break
       fi
@@ -81,13 +167,7 @@ find() {
     local clean_host_line=$(echo "$host_line_content" | sed 's/[[:space:]]*$//')
     
     # Filter the rest: remove empty lines and standalone (non-indented) comment lines
-    local rest_of_block=$(echo "$block_content" | tail -n +2 | awk '
-      /^\s/ { print; next }  # Indented lines (part of block) - keep
-      /^[^\s#]/ { print; next }  # Non-indented, non-comment lines - keep
-      /^#/ && /^\s+#/ { print; next }  # Indented comments (part of block) - keep
-      /^$/ { print; next }  # Empty lines within block - keep
-      # Skip standalone (non-indented) comment lines
-    ')
+    # Note: we keep this streaming below to preserve colors and avoid buffering.
     
     # Build output: always start with Host line
     # Ensure clean_host_line is not empty
@@ -95,12 +175,25 @@ find() {
       clean_host_line=$(sed -n "${start_line}p" "$file" 2>/dev/null | sed 's/[[:space:]]*$//')
     fi
     
+    # Print file header with color
+    echo -n "$(color_file_header)"
     echo "--- $file (lines $start_line-$end_line) ---"
-    # Always print the Host line first
-    printf "%s\n" "$clean_host_line"
-    if [ -n "$rest_of_block" ]; then
-      printf "%s\n" "$rest_of_block"
-    fi
+    echo -n "$(color_reset)"
+    
+    # Always print the Host line first with highlighting
+    highlight_line "$clean_host_line"
+    
+    # Print rest of block with highlighting - process line by line directly
+    echo "$block_content" | tail -n +2 | while IFS= read -r line || [ -n "$line" ]; do
+      # Skip empty lines and standalone (non-indented) comment lines
+      if [ -z "$line" ]; then
+        continue
+      fi
+      # Standalone comment (not indented) - skip
+      [[ "$line" == \#* ]] && continue
+      # Print the line with highlighting
+      highlight_line "$line"
+    done
     echo ""
   }
   
@@ -112,7 +205,7 @@ find() {
     while [ $start_line -gt 0 ]; do
       local line_content=$(sed -n "${start_line}p" "$file" 2>/dev/null)
       # Check if this line starts with "Host " (with space) or "Match " (with space)
-      if echo "$line_content" | grep -qiE "^\s*(Host |Match )"; then
+      if echo "$line_content" | grep -qiE "^[[:space:]]*(Host|Match)[[:space:]]"; then
         echo "$start_line"
         return 0
       fi
@@ -124,10 +217,13 @@ find() {
   # Helper function to search for matches in all lines
   search_in_all_lines() {
     local file="$1"
-    # Escape special regex characters in hostname
-    local escaped_hostname=$(echo "$hostname" | sed 's/[.[\*^$()+?{|]/\\&/g')
-    # Search for the hostname in all lines (case-insensitive)
-    grep -ni "${escaped_hostname}" "$file" 2>/dev/null | cut -d: -f1 | sort -u
+    # Search for the hostname as a substring in all non-comment lines (case-insensitive)
+    # Important: ignore standalone comments like "# Autoadded ..." to avoid jumping to the previous Host block.
+    awk -v q="$hostname" '
+      BEGIN { q = tolower(q) }
+      /^[[:space:]]*#/ { next }
+      { if (index(tolower($0), q) > 0) print NR }
+    ' "$file" 2>/dev/null
   }
   
   # Search in config file - find matches in all lines
@@ -145,9 +241,13 @@ find() {
       done <<< "$matching_lines"
       
       if [ -n "$unique_starts" ]; then
-        echo "$unique_starts" | grep -v '^$' | sort -n | while IFS= read -r start_line; do
+        local sorted_starts
+        sorted_starts=$(echo "$unique_starts" | grep -v '^$' | sort -n)
+        while IFS= read -r start_line; do
+          [ -z "$start_line" ] && continue
           extract_host_block "$config_file" "$start_line"
-        done >> "$output_file"
+          found_any=true
+        done <<< "$sorted_starts"
       fi
     fi
   fi
@@ -169,9 +269,13 @@ find() {
           done <<< "$matching_lines"
           
           if [ -n "$unique_starts" ]; then
-            echo "$unique_starts" | grep -v '^$' | sort -n | while IFS= read -r start_line; do
+            local sorted_starts
+            sorted_starts=$(echo "$unique_starts" | grep -v '^$' | sort -n)
+            while IFS= read -r start_line; do
+              [ -z "$start_line" ] && continue
               extract_host_block "$host_file" "$start_line"
-            done >> "$output_file"
+              found_any=true
+            done <<< "$sorted_starts"
           fi
         fi
       fi
@@ -179,12 +283,8 @@ find() {
   fi
   
   # Display results
-  if [ -s "$output_file" ]; then
-    cat "$output_file"
-    rm -f "$output_file"
-  else
+  if [ "$found_any" != "true" ]; then
     echo "No host found matching: $hostname" >&2
-    rm -f "$output_file"
     return 1
   fi
 }
