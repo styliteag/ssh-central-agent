@@ -37,15 +37,27 @@ find() {
     local line_num="$2"
     
     # Find the start of this Host block (go backwards to find the Host line)
+    # Search specifically for "Host " (with space) or "Match " to ensure we get the directive line
     local start_line=$line_num
     while [ $start_line -gt 0 ]; do
       local line_content=$(sed -n "${start_line}p" "$file" 2>/dev/null)
-      # Check if this line starts a Host or Match block
-      if echo "$line_content" | grep -qiE "^\s*(Host|Match)"; then
+      # Check if this line starts with "Host " (with space) or "Match " (with space)
+      if echo "$line_content" | grep -qiE "^\s*(Host |Match )"; then
         break
       fi
       start_line=$((start_line - 1))
     done
+    
+    # Verify we found a Host/Match line
+    if [ $start_line -eq 0 ]; then
+      return 1
+    fi
+    
+    local host_line_content=$(sed -n "${start_line}p" "$file" 2>/dev/null)
+    # Verify it's actually a Host or Match line with space
+    if ! echo "$host_line_content" | grep -qiE "^\s*(Host |Match )"; then
+      return 1
+    fi
     
     # Find the end of this Host block (next Host or Match line, or end of file)
     local total_lines=$(wc -l < "$file" 2>/dev/null)
@@ -54,30 +66,41 @@ find() {
     
     while [ $next_line -le $total_lines ]; do
       local line_content=$(sed -n "${next_line}p" "$file" 2>/dev/null)
-      # Check if this line starts a new Host or Match block
-      if echo "$line_content" | grep -qiE "^\s*(Host|Match)"; then
+      # Check if this line starts a new Host or Match block (with space)
+      if echo "$line_content" | grep -qiE "^\s*(Host |Match )"; then
         end_line=$((next_line - 1))
         break
       fi
       next_line=$((next_line + 1))
     done
     
-    # Extract the block and filter out empty lines and standalone (non-indented) comment lines
+    # Extract the block starting from the Host line
     local block_content=$(sed -n "${start_line},${end_line}p" "$file" 2>/dev/null)
     
-    # Filter: remove empty lines and standalone comment lines (not indented, not part of Host block)
-    # Keep the Host line and all indented lines (which are part of the Host block)
-    local filtered_content=$(echo "$block_content" | grep -v '^$' | awk '
-      /^\s*(Host|Match)/ { print; next }  # Host/Match line - always keep
+    # Always start with the Host line (remove any trailing whitespace)
+    local clean_host_line=$(echo "$host_line_content" | sed 's/[[:space:]]*$//')
+    
+    # Filter the rest: remove empty lines and standalone (non-indented) comment lines
+    local rest_of_block=$(echo "$block_content" | tail -n +2 | awk '
       /^\s/ { print; next }  # Indented lines (part of block) - keep
       /^[^\s#]/ { print; next }  # Non-indented, non-comment lines - keep
       /^#/ && /^\s+#/ { print; next }  # Indented comments (part of block) - keep
+      /^$/ { print; next }  # Empty lines within block - keep
       # Skip standalone (non-indented) comment lines
     ')
     
-    # Print the file name and the filtered Host block
+    # Build output: always start with Host line
+    # Ensure clean_host_line is not empty
+    if [ -z "$clean_host_line" ]; then
+      clean_host_line=$(sed -n "${start_line}p" "$file" 2>/dev/null | sed 's/[[:space:]]*$//')
+    fi
+    
     echo "--- $file (lines $start_line-$end_line) ---"
-    echo "$filtered_content"
+    # Always print the Host line first
+    printf "%s\n" "$clean_host_line"
+    if [ -n "$rest_of_block" ]; then
+      printf "%s\n" "$rest_of_block"
+    fi
     echo ""
   }
   
@@ -88,8 +111,8 @@ find() {
     local start_line=$line_num
     while [ $start_line -gt 0 ]; do
       local line_content=$(sed -n "${start_line}p" "$file" 2>/dev/null)
-      # Check if this line starts a Host or Match block
-      if echo "$line_content" | grep -qiE "^\s*(Host|Match)"; then
+      # Check if this line starts with "Host " (with space) or "Match " (with space)
+      if echo "$line_content" | grep -qiE "^\s*(Host |Match )"; then
         echo "$start_line"
         return 0
       fi
