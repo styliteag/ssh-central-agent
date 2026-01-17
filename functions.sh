@@ -427,7 +427,7 @@ kill_if_exists() {
     local pid=$1
     local name=$2
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-        log_info "Stopping $name (PID $pid)"
+        log_info "Killing $name (PID $pid)"
         kill -TERM "$pid" 2>/dev/null || true
     fi
 }
@@ -1224,6 +1224,13 @@ parse_arguments() {
       log_success "All agents and connections killed"
       exit 0
       ;;
+    --)
+      # End of options marker: treat all remaining arguments as SSH arguments
+      shift
+      SSH_ARGS="$*"
+      SSH_MODE=1
+      break
+      ;;
     --*)
       log_error "Unknown option: $1"
       exit 1
@@ -1280,8 +1287,9 @@ parse_arguments() {
       shift
       ;;
     *)
-      # Non-option argument - remaining args are the command
-      CMD="$*"
+      # Non-option argument - treat as SSH arguments (alias: "sca host" = "sca --ssh host")
+      SSH_ARGS="$*"
+      SSH_MODE=1
       break
       ;;
   esac
