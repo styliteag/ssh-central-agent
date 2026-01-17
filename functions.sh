@@ -30,13 +30,13 @@ color() {
     # Skip if TERM is "dumb" (no color support)
     [ "${TERM:-}" = "dumb" ] && return
     
-    # Use colors only if:
+    # Use colors if:
     # - stdout is a TTY (interactive terminal), OR
-    # - FORCE_COLOR is explicitly set
-    # We don't use TERM alone because when redirecting (> file), stdout is not a TTY
-    # and we don't want ANSI codes in files unless explicitly requested
+    # - FORCE_COLOR is explicitly set, OR
+    # - TERM is set and stderr is also a TTY (indicates interactive session, not file redirect)
+    # We check stderr TTY to distinguish interactive sessions from file redirects
     if command -v tput >/dev/null 2>&1; then
-        if [ -t 1 ] || [ "${FORCE_COLOR:-0}" == "1" ]; then
+        if [ -t 1 ] || [ "${FORCE_COLOR:-0}" == "1" ] || ([ -n "${TERM:-}" ] && [ -t 2 ]); then
             tput "$@" 2>/dev/null || true
         fi
     fi
