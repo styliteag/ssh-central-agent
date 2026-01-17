@@ -671,16 +671,42 @@ execute_command_or_shell() {
 # Patch SSH config: add jump aliases (sca-jump, jump, etc.) to the Host line for
 # this user's level. Run on both config and config_single.
 # - 1st sed: strip any existing aliases after -sca-magic-jump (reset before re-apply)
-# - 2nd sed: append "jump jump_local jump_my sca-jump sca-jump_org sca-jump_local sca-jump_my sca-jump_mux" to L$MY_LEVEL-sca-magic-jump
-# Required after Ansible overwrites config (template has no sca-jump). Run on both
-# setup_new_connection and use_existing_connection so sca-jump is present even when
-# reusing an existing socket.
+# - 2nd sed: append "jump jump_local jump_my sca-jump ..." to L$MY_LEVEL-sca-magic-jump
+#
+# Only patches when needed; uses $PLAYBOOK_DIR/.sca-jump-level to remember:
+# - LEVEL: last patched level. Re-patch if MY_LEVEL != LEVEL (backend or --level change).
+# - If config or config_single is newer than the status file, re-patch (Ansible overwrote).
 patch_jump_aliases() {
-  local f
+  local f cfg single status need=0
+  status="$PLAYBOOK_DIR/.sca-jump-level"
+  cfg="$PLAYBOOK_DIR/$SSH_CONFIG_FILE"
+  single="$PLAYBOOK_DIR/${SSH_CONFIG_FILE}_single"
+
+  # Need to patch if: no status yet, level changed, or config was overwritten (e.g. Ansible)
+  if [ ! -f "$status" ]; then
+    need=1
+    log_debug "Patch: no status file, will patch"
+  else
+    local stored
+    stored=$(grep -E '^LEVEL=' "$status" 2>/dev/null | cut -d= -f2)
+    if [ "$stored" != "$MY_LEVEL" ]; then
+      need=1
+      log_info "Patch: level changed ($stored -> $MY_LEVEL), will patch"
+    elif [ -f "$cfg" ] && [ "$cfg" -nt "$status" ]; then
+      need=1
+      log_info "Patch: $SSH_CONFIG_FILE newer than status (e.g. Ansible), will patch"
+    elif [ -f "$single" ] && [ "$single" -nt "$status" ]; then
+      need=1
+      log_info "Patch: ${SSH_CONFIG_FILE}_single newer than status (e.g. Ansible), will patch"
+    fi
+  fi
+
+  [ "$need" -eq 0 ] && log_debug "Patch: level $MY_LEVEL already applied, skip" && return 0
+
   log_info "Patching jump aliases (sca-jump, jump, etc.) for level $MY_LEVEL in SSH config"
-  for f in "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" "$PLAYBOOK_DIR/${SSH_CONFIG_FILE}_single"; do
+  for f in "$cfg" "$single"; do
     if [ ! -f "$f" ]; then
-      log_debug "Skip (not a file): $f"
+      log_debug "  Skip (not a file): $f"
       continue
     fi
     log_info "  Patching: $f"
@@ -689,6 +715,8 @@ patch_jump_aliases() {
       -e "s/\(L$MY_LEVEL-sca-magic-jump\)/\1 jump jump_local jump_my sca-jump sca-jump_org sca-jump_local sca-jump_my sca-jump_mux/g" \
       "$f"
   done
+  echo "LEVEL=$MY_LEVEL" > "$status"
+  touch "$status"
 }
 
 # Setup new connection
