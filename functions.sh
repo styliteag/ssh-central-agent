@@ -24,8 +24,21 @@
 
 # Color helper function
 color() {
-    if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && command -v tput >/dev/null 2>&1; then
-        tput "$@"
+    # Skip colors if explicitly disabled
+    [ -n "${NO_COLOR:-}" ] && return
+    
+    # Skip if TERM is "dumb" (no color support)
+    [ "${TERM:-}" = "dumb" ] && return
+    
+    # Use colors only if:
+    # - stdout is a TTY (interactive terminal), OR
+    # - FORCE_COLOR is explicitly set
+    # We don't use TERM alone because when redirecting (> file), stdout is not a TTY
+    # and we don't want ANSI codes in files unless explicitly requested
+    if command -v tput >/dev/null 2>&1; then
+        if [ -t 1 ] || [ "${FORCE_COLOR:-0}" == "1" ]; then
+            tput "$@" 2>/dev/null || true
+        fi
     fi
 }
 
@@ -185,6 +198,38 @@ search_in_all_lines() {
   ' "$file" 2>/dev/null
 }
 
+# Process matching lines and extract host blocks
+process_matching_lines() {
+  local file="$1"
+  local hostname="$2"
+  local matching_lines=$(search_in_all_lines "$file" "$hostname")
+  
+  if [ -z "$matching_lines" ]; then
+    return 1
+  fi
+  
+  local unique_starts=""
+  while IFS= read -r line_num; do
+    local start_line=$(find_host_block_start "$file" "$line_num")
+    if [ -n "$start_line" ]; then
+      if ! echo "$unique_starts" | grep -q "^${start_line}$"; then
+        unique_starts="${unique_starts}${start_line}"$'\n'
+      fi
+    fi
+  done <<< "$matching_lines"
+  
+  if [ -n "$unique_starts" ]; then
+    local sorted_starts
+    sorted_starts=$(echo "$unique_starts" | grep -v '^$' | sort -n)
+    while IFS= read -r start_line; do
+      [ -z "$start_line" ] && continue
+      extract_host_block "$file" "$start_line"
+    done <<< "$sorted_starts"
+    return 0
+  fi
+  return 1
+}
+
 # Helper function to extract and print Host block from a file
 extract_host_block() {
   local file="$1"
@@ -273,58 +318,16 @@ find() {
   
   echo "Searching for host: $hostname" >&2
   
-  # Search in config file - find matches in all lines
+  # Search in config file
   if [ -f "$config_file" ]; then
-    local matching_lines=$(search_in_all_lines "$config_file" "$hostname")
-    if [ -n "$matching_lines" ]; then
-      local unique_starts=""
-      while IFS= read -r line_num; do
-        local start_line=$(find_host_block_start "$config_file" "$line_num")
-        if [ -n "$start_line" ]; then
-          if ! echo "$unique_starts" | grep -q "^${start_line}$"; then
-            unique_starts="${unique_starts}${start_line}"$'\n'
-          fi
-        fi
-      done <<< "$matching_lines"
-      
-      if [ -n "$unique_starts" ]; then
-        local sorted_starts
-        sorted_starts=$(echo "$unique_starts" | grep -v '^$' | sort -n)
-        while IFS= read -r start_line; do
-          [ -z "$start_line" ] && continue
-          extract_host_block "$config_file" "$start_line"
-          found_any=true
-        done <<< "$sorted_starts"
-      fi
-    fi
+    process_matching_lines "$config_file" "$hostname" && found_any=true
   fi
   
-  # Search in hosts/* files - find matches in all lines
+  # Search in hosts/* files
   if [ -d "$hosts_dir" ]; then
     for host_file in "$hosts_dir"/*; do
       if [ -f "$host_file" ]; then
-        local matching_lines=$(search_in_all_lines "$host_file" "$hostname")
-        if [ -n "$matching_lines" ]; then
-          local unique_starts=""
-          while IFS= read -r line_num; do
-            local start_line=$(find_host_block_start "$host_file" "$line_num")
-            if [ -n "$start_line" ]; then
-              if ! echo "$unique_starts" | grep -q "^${start_line}$"; then
-                unique_starts="${unique_starts}${start_line}"$'\n'
-              fi
-            fi
-          done <<< "$matching_lines"
-          
-          if [ -n "$unique_starts" ]; then
-            local sorted_starts
-            sorted_starts=$(echo "$unique_starts" | grep -v '^$' | sort -n)
-            while IFS= read -r start_line; do
-              [ -z "$start_line" ] && continue
-              extract_host_block "$host_file" "$start_line"
-              found_any=true
-            done <<< "$sorted_starts"
-          fi
-        fi
+        process_matching_lines "$host_file" "$hostname" && found_any=true
       fi
     done
   fi
@@ -454,8 +457,8 @@ check_ssh_agent_running() {
 # Display harmless error note for ssh-agent-mux
 show_harmless_error_note() {
     log_note "You can safely ignore these harmless errors:"
-    echo "  $(color setaf 3)-$(color sgr0) 'ERROR [ssh_agent_mux] Unexpected error on socket ... when requesting session-bind@openssh.com extension: Agent: Protocol error: Unexpected response received'" >&2
-    echo "  $(color setaf 3)-$(color sgr0) 'ERROR [ssh_agent_lib::agent] Error handling message: Failure'" >&2
+    echo "  $(color_stderr setaf 3)-$(color_stderr sgr0) 'ERROR [ssh_agent_mux] Unexpected error on socket ... when requesting session-bind@openssh.com extension: Agent: Protocol error: Unexpected response received'" >&2
+    echo "  $(color_stderr setaf 3)-$(color_stderr sgr0) 'ERROR [ssh_agent_lib::agent] Error handling message: Failure'" >&2
 }
 
 # Find identity file in common locations
@@ -991,10 +994,10 @@ setup_rust_multiplexer() {
          if [ -f "$MACOS_LOG_FILE" ]; then
               log_info "ssh-agent-mux logs: $MACOS_LOG_FILE"
               show_harmless_error_note
-              echo "$(color setaf 6)--- Recent log entries (filtered) ---$(color sgr0)" >&2
+              echo "$(color_stderr setaf 6)--- Recent log entries (filtered) ---$(color_stderr sgr0)" >&2
               # Filter out harmless errors from ssh-agent-mux
               tail -n 50 "$MACOS_LOG_FILE" | grep -vE "ERROR \[ssh_agent_lib::agent\] Error handling message: Failure|ERROR \[ssh_agent_mux\] Unexpected error on socket.*when requesting session-bind@openssh.com extension.*Protocol error.*Unexpected response received" | tail -n 10 >&2
-              echo "$(color setaf 6)--- Tailing logs (filtered, PID will be cleaned up on exit) ---$(color sgr0)" >&2
+              echo "$(color_stderr setaf 6)--- Tailing logs (filtered, PID will be cleaned up on exit) ---$(color_stderr sgr0)" >&2
               # Filter out harmless errors while tailing
               tail -Fq "$MACOS_LOG_FILE" 2>&1 | grep -vE "ERROR \[ssh_agent_lib::agent\] Error handling message: Failure|ERROR \[ssh_agent_mux\] Unexpected error on socket.*when requesting session-bind@openssh.com extension.*Protocol error.*Unexpected response received" >&2 &
               TAIL_LOG_PID=$!
@@ -1007,10 +1010,10 @@ setup_rust_multiplexer() {
          # Display logs with filtering for Linux systemd service
          log_info "ssh-agent-mux logs (Linux systemd):"
          show_harmless_error_note
-         echo "$(color setaf 6)--- Recent log entries (filtered) ---$(color sgr0)" >&2
+         echo "$(color_stderr setaf 6)--- Recent log entries (filtered) ---$(color_stderr sgr0)" >&2
          # Filter out harmless errors from recent logs
          journalctl --user -u ssh-agent-mux -n 50 --no-pager 2>/dev/null | grep -vE "ERROR \[ssh_agent_lib::agent\] Error handling message: Failure|ERROR \[ssh_agent_mux\] Unexpected error on socket.*when requesting session-bind@openssh.com extension.*Protocol error.*Unexpected response received" | tail -n 10 >&2
-         echo "$(color setaf 6)--- Tailing logs (filtered, PID will be cleaned up on exit) ---$(color sgr0)" >&2
+         echo "$(color_stderr setaf 6)--- Tailing logs (filtered, PID will be cleaned up on exit) ---$(color_stderr sgr0)" >&2
          # Filter out harmless errors while tailing
          journalctl --user -u ssh-agent-mux -f 2>&1 | grep -vE "ERROR \[ssh_agent_lib::agent\] Error handling message: Failure|ERROR \[ssh_agent_mux\] Unexpected error on socket.*when requesting session-bind@openssh.com extension.*Protocol error.*Unexpected response received" >&2 &
          TAIL_LOG_PID=$!
