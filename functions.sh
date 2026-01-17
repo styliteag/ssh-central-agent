@@ -344,17 +344,6 @@ add() {
   (cd "$PLAYBOOK_DIR" && ./addhost "$@")
 }
 
-connect() {
-  echo "Connecting to Host:" >&2
-  if [ "$KEY" = "local" ]; then
-    MYSSH="ssh -o 'IdentityAgent \"$SSH_AUTH_SOCK\"' -o 'IdentityFile none'"
-  elif [ "$KEY" = "remote" ]; then 
-    MYSSH="ssh -o 'IdentityAgent \"$SCA_SSH_AUTH_SOCK\"' -o 'IdentityFile none'"
-  else
-    MYSSH="ssh"
-  fi
-}
-
 do_cmd() {
     CMD="$1"
     shift
@@ -628,10 +617,6 @@ execute_command_or_shell() {
     # Use -o IdentityAgent to explicitly specify the agent socket
     eval "ssh -o 'IdentityAgent \"$SSH_SOCKET\"' -o 'IdentityFile none' $SSH_ARGS"
     exit $?
-    
-  elif [ -n "$MYSSH" ]; then
-    log_info "STARTING: $MYSSH $CMD"
-    eval $MYSSH $CMD
     
   elif [ -n "$CMD" ]; then
     log_info "STARTING: $CMD"
@@ -1277,7 +1262,6 @@ SHELL_MODE=0                # Output env vars in shell format (like ssh-agent -s
 
 # Runtime variables
 KEY=
-MYSSH=
 ORG_ARGS=$*
 ORG_SSH_AUTH_SOCK=$SSH_AUTH_SOCK
 SSH_MODE=0                # Direct SSH connection mode
