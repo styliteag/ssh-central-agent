@@ -1346,6 +1346,8 @@ Options:
   -s, --ssh [args...]   Connect directly via ssh with specified agent
                         All arguments after --ssh are passed directly to ssh
                         Use with --key to select agent: local, remote, or mux
+  --                    End of options marker: treat all following args as SSH arguments
+                        Use this when SSH options start with '-' (e.g., -p, -o)
   --kill                Kill all agents and remote connections, remove socket files
 
 Examples:
@@ -1355,8 +1357,10 @@ Examples:
   eval \`$SCA_SCRIPT -e --key=local\`         # Set SSH_AUTH_SOCK in current shell
   $SCA_SCRIPT --list                          # List all configured hosts
   $SCA_SCRIPT --find myserver                 # Find host 'myserver'
+  $SCA_SCRIPT myserver                        # Connect to 'myserver' (uses remote agent)
   $SCA_SCRIPT --ssh myserver                  # Connect to 'myserver' (uses remote agent)
   $SCA_SCRIPT --key=local --ssh user@host     # Connect using local agent
+  $SCA_SCRIPT --key=remote -- -p9922 root@192.168.178.100 ls  # Connect with SSH options and run 'ls' command
   $SCA_SCRIPT --key=mux --ssh -p9922 host    # Connect using multiplexed agent with custom port
   $SCA_SCRIPT --wait                          # Run in background monitoring mode
   $SCA_SCRIPT --kill                          # Clean up all agents and connections"

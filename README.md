@@ -145,15 +145,24 @@ ssh-add -l  # List available keys
 
 **Direct SSH Connection:**
 
-You can also connect directly to hosts without starting a subshell:
+You can also connect directly to hosts without starting a subshell. Positional arguments are automatically treated as SSH arguments:
 
 ```bash
-sca --ssh user@hostname              # Connect using remote agent (default)
-sca --key=local --ssh user@hostname # Connect using local agent
-sca --key=mux --ssh user@hostname   # Connect using multiplexed agent
+sca user@hostname                    # Connect using remote agent (default)
+sca --ssh user@hostname              # Same as above (explicit)
+sca --key=local user@hostname        # Connect using local agent
+sca --key=mux user@hostname          # Connect using multiplexed agent
 ```
 
-All arguments after `--ssh` are passed directly to `ssh`, so you can use any SSH options:
+When using SSH options that start with `-` (like `-p`, `-o`), use `--` to separate SCA options from SSH arguments:
+
+```bash
+sca --key=remote -- -p9922 root@10.20.3.254 hostname
+sca --key=local -- -o StrictHostKeyChecking=no user@host
+sca --key=mux -- -p9922 -v user@hostname
+```
+
+All arguments after `--ssh` or `--` are passed directly to `ssh`, so you can use any SSH options:
 
 ```bash
 sca --key=local --ssh -p9922 -v user@hostname
@@ -179,9 +188,11 @@ sca --ssh [args...]     # Connect directly via ssh (all args passed to ssh)
 
 **Direct SSH Connection:**
 ```bash
-sca --ssh user@host                    # Connect using remote agent (default)
-sca --key=local --ssh user@host        # Connect using local agent
+sca user@host                          # Connect using remote agent (default)
+sca --ssh user@host                    # Same as above (explicit)
+sca --key=local user@host              # Connect using local agent
 sca --key=mux --ssh -p9922 user@host  # Connect using multiplexed agent with options
+sca --key=remote -- -p9922 root@10.20.3.254 hostname  # Use -- for SSH options starting with -
 sca --key=remote --ssh host command    # Execute command on remote host
 ```
 
