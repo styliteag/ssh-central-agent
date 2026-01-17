@@ -682,6 +682,8 @@ patch_jump_aliases() {
   cfg="$PLAYBOOK_DIR/$SSH_CONFIG_FILE"
   single="$PLAYBOOK_DIR/${SSH_CONFIG_FILE}_single"
 
+  log_info "Patching jump aliases (sca-jump, jump, etc.) for level $MY_LEVEL in SSH config"
+
   # Need to patch if: no status yet, level changed, or config was overwritten (e.g. Ansible)
   if [ ! -f "$status" ]; then
     need=1
@@ -921,9 +923,6 @@ use_existing_connection() {
     fi
   fi
 
-  # Ensure sca-jump (and aliases) exist for this level; needed when Ansible overwrote config
-  patch_jump_aliases
-  
   # Determine which socket to use
   if [ -S "$MUX_SSH_AUTH_SOCK" ] && check_agent_socket "$MUX_SSH_AUTH_SOCK"; then
     log_info "Using working multiplexed SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK"
