@@ -71,24 +71,24 @@ Options:
   -d, --debug           Enable debug mode (verbose output)
   -r, --reverse         Reverse the order of agents when multiplexing
   -w, --wait            Run in background and monitor connection, restart if needed
-  -s                    Output environment variables in shell format (like ssh-agent -s)
-                        Use with: eval \`$0 -s --key=local\` to set SSH_AUTH_SOCK in current shell
+  -e, --env             Output environment variables in shell format (like ssh-agent -s)
+                        Use with: eval \`$0 -e --key=local\` to set SSH_AUTH_SOCK in current shell
   -l, --level LEVEL     Set security level (0-3, default: auto-detect)
   --key=local|remote    Specify which key to use (required for new connections)
   --mux=python|rust     Choose multiplexer type (default: python)
   --list                List all configured hosts
   --find HOSTNAME       Find and display information about a specific host
   --add HOSTNAME        Add a new host to the configuration
-  --connect [user@]host Connect to a specific host
+  -s, --ssh [user@]host Connect to a specific host
   --kill                Kill all agents and remote connections, remove socket files
 
 Examples:
   $0 --key=local                    # Start subshell with local key
   $0 --key=remote                   # Start subshell with remote key
-  eval \`$0 -s\`         # Set SSH_AUTH_SOCK in current shell
+  eval \`$0 -e\`         # Set SSH_AUTH_SOCK in current shell
   $0 --list                          # List all configured hosts
   $0 --find myserver                 # Find host 'myserver'
-  $0 --connect myserver              # Connect to 'myserver'
+  $0 --ssh myserver                  # Connect to 'myserver'
   $0 --wait (or -w)                  # Run in background monitoring mode
   $0 --kill                          # Clean up all agents and connections"
 
@@ -348,7 +348,7 @@ while [ $# -gt 0 ]; do
       WAIT=1
       shift
       ;;
-    -s)
+    -e|--env)
       SHELL_MODE=1
       shift
       ;;
@@ -389,12 +389,13 @@ while [ $# -gt 0 ]; do
       do_cmd "$CMD_NAME" "$2"
       exit 1
       ;;
-    --connect)
+    -s|--ssh|--connect)
       if [ -z "$2" ]; then
         log_error "Option $1 requires an argument"
         exit 1
       fi
       connect "$2"
+      CMD="$2"
       shift 2
       ;;
     --kill)
@@ -434,9 +435,19 @@ while [ $# -gt 0 ]; do
             WAIT=1
             OPTARG="${OPTARG#?}"
             ;;
-          s)
+          e)
             SHELL_MODE=1
             OPTARG="${OPTARG#?}"
+            ;;
+          s)
+            if [ -z "$2" ]; then
+              log_error "Option -s requires an argument"
+              exit 1
+            fi
+            connect "$2"
+            CMD="$2"
+            shift
+            OPTARG=""
             ;;
           l)
             if [ -z "$2" ]; then

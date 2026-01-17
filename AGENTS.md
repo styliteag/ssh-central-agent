@@ -57,7 +57,7 @@ This is the primary tool for interaction. It creates a subshell with `SSH_AUTH_S
 ./sca --find <hostname>
 
 # Connect to specific host
-./sca --connect <hostname>
+./sca --ssh <hostname>
 
 # Start and wait for connection (useful for background agents)
 ./sca --wait

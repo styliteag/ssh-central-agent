@@ -135,10 +135,10 @@ Start a shell with access to remote keys using the SSH Central Agent:
 sca
 ```
 
-Or use `eval \`sca -s\`` to set the SSH agent in your current shell (similar to `ssh-agent -s`):
+Or use `eval \`sca -e\`` to set the SSH agent in your current shell (similar to `ssh-agent -s`):
 
 ```bash
-eval `sca -s --key=local`
+eval `sca -e --key=local`
 # Now SSH_AUTH_SOCK is set in your current shell
 ssh-add -l  # List available keys
 ```
@@ -156,12 +156,12 @@ sca --key=remote        # Start subshell with remote key
 sca --list              # List all configured hosts
 sca --find hostname     # Find and display information about a specific host
 sca --add hostname      # Add a new host to the configuration
-sca --connect [user@]host  # Connect to a specific host
+sca --ssh [user@]host   # Connect to a specific host
 ```
 
 **Advanced Options:**
 ```bash
-sca -s --key=local      # Output env vars for eval (use with eval \`sca -s --key=local\`)
+sca -e --key=local      # Output env vars for eval (use with eval \`sca -e --key=local\`)
 sca --wait              # Run in background and monitor connection, restart if needed
 sca --kill              # Kill all agents and connections, remove socket files
 sca -d                  # Enable debug mode (verbose output)
