@@ -59,6 +59,9 @@ KEY=
 MYSSH=
 ORG_ARGS=$*
 ORG_SSH_AUTH_SOCK=$SSH_AUTH_SOCK
+SSH_MODE=0                # Direct SSH connection mode
+SSH_HOST=                 # Host for SSH connection
+SSH_ARGS=                 # Additional arguments for SSH
 # CMD will be set after argument parsing
 
 # Include helper functions
@@ -394,9 +397,13 @@ while [ $# -gt 0 ]; do
         log_error "Option $1 requires an argument"
         exit 1
       fi
-      connect "$2"
-      CMD="$2"
+      SSH_MODE=1
+      SSH_HOST="$2"
       shift 2
+      # Collect all remaining arguments for SSH
+      SSH_ARGS="$*"
+      # Clear remaining args so they don't get processed as options
+      set --
       ;;
     --kill)
       log_info "Killing all agents and remote connections..."
@@ -444,9 +451,13 @@ while [ $# -gt 0 ]; do
               log_error "Option -s requires an argument"
               exit 1
             fi
-            connect "$2"
-            CMD="$2"
+            SSH_MODE=1
+            SSH_HOST="$2"
             shift
+            # Collect all remaining arguments for SSH
+            SSH_ARGS="$*"
+            # Clear remaining args so they don't get processed as options
+            set --
             OPTARG=""
             ;;
           l)
@@ -955,6 +966,19 @@ if [ "$SHELL_MODE" == "1" ]; then
     echo "echo Agent pid $AGENT_PID;"
   fi
   exit 0
+  
+elif [ "$SSH_MODE" == "1" ]; then
+  #------------------------------------------------------------------------------
+  # SSH Mode: Direct SSH connection with IdentityAgent
+  #------------------------------------------------------------------------------
+  SSH_SOCKET="/Users/bonis/.ssh/scadev-mux.sock"
+  log_info "Connecting to $SSH_HOST with IdentityAgent=$SSH_SOCKET"
+  if [ -n "$SSH_ARGS" ]; then
+    ssh -oIdentityAgent="$SSH_SOCKET" "$SSH_HOST" $SSH_ARGS
+  else
+    ssh -oIdentityAgent="$SSH_SOCKET" "$SSH_HOST"
+  fi
+  exit $?
   
 elif [ -n "$MYSSH" ]; then
   log_info "STARTING: $MYSSH $CMD"
