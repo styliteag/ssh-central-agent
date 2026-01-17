@@ -668,6 +668,29 @@ execute_command_or_shell() {
   fi
 }
 
+# Patch SSH config: add jump aliases (sca-jump, jump, etc.) to the Host line for
+# this user's level. Run on both config and config_single.
+# - 1st sed: strip any existing aliases after -sca-magic-jump (reset before re-apply)
+# - 2nd sed: append "jump jump_local jump_my sca-jump sca-jump_org sca-jump_local sca-jump_my sca-jump_mux" to L$MY_LEVEL-sca-magic-jump
+# Required after Ansible overwrites config (template has no sca-jump). Run on both
+# setup_new_connection and use_existing_connection so sca-jump is present even when
+# reusing an existing socket.
+patch_jump_aliases() {
+  local f
+  log_info "Patching jump aliases (sca-jump, jump, etc.) for level $MY_LEVEL in SSH config"
+  for f in "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" "$PLAYBOOK_DIR/${SSH_CONFIG_FILE}_single"; do
+    if [ ! -f "$f" ]; then
+      log_debug "Skip (not a file): $f"
+      continue
+    fi
+    log_info "  Patching: $f"
+    sed -i.bak \
+      -e "s/\(-sca-magic-jump\)\(.*\)$/\1/g" \
+      -e "s/\(L$MY_LEVEL-sca-magic-jump\)/\1 jump jump_local jump_my sca-jump sca-jump_org sca-jump_local sca-jump_my sca-jump_mux/g" \
+      "$f"
+  done
+}
+
 # Setup new connection
 setup_new_connection() {
   log_info "No working agent found: Starting new connection"
@@ -701,14 +724,9 @@ setup_new_connection() {
     exit 1
   fi
 
-  # Configure SSH Config for Jump Host Selection
-  # The ".bak" is needed on MacOSX
-  sed -i.bak \
-    -e "s/\(-sca-magic-jump\)\(.*\)$/\1/g" \
-    -e "s/\(L$MY_LEVEL-sca-magic-jump\)/\1 jump jump_local jump_my sca-jump sca-jump_org sca-jump_local sca-jump_my sca-jump_mux/g" \
-    $PLAYBOOK_DIR/$SSH_CONFIG_FILE \
-    $PLAYBOOK_DIR/$SSH_CONFIG_FILE_single
-  
+  # Configure SSH Config for Jump Host Selection (adds sca-jump etc. for this level)
+  patch_jump_aliases
+
   log_success "Successfully started a remote agent at $SCA_SSH_AUTH_SOCK"
   
   # Setup Agent Multiplexer (only if we have a local agent)
@@ -874,6 +892,9 @@ use_existing_connection() {
       MY_LEVEL=$LEVEL
     fi
   fi
+
+  # Ensure sca-jump (and aliases) exist for this level; needed when Ansible overwrote config
+  patch_jump_aliases
   
   # Determine which socket to use
   if [ -S "$MUX_SSH_AUTH_SOCK" ] && check_agent_socket "$MUX_SSH_AUTH_SOCK"; then
