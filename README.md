@@ -143,12 +143,30 @@ eval `sca -e --key=local`
 ssh-add -l  # List available keys
 ```
 
+**Direct SSH Connection:**
+
+You can also connect directly to hosts without starting a subshell:
+
+```bash
+sca --ssh user@hostname              # Connect using remote agent (default)
+sca --key=local --ssh user@hostname # Connect using local agent
+sca --key=mux --ssh user@hostname   # Connect using multiplexed agent
+```
+
+All arguments after `--ssh` are passed directly to `ssh`, so you can use any SSH options:
+
+```bash
+sca --key=local --ssh -p9922 -v user@hostname
+sca --key=mux --ssh user@hostname "command to run"
+```
+
 ### Command Options
 
 **Basic Usage:**
 ```bash
-sca --key=local         # Start subshell with local key
-sca --key=remote        # Start subshell with remote key
+sca --key=local         # Start subshell with local key only
+sca --key=remote        # Start subshell with remote key only (default)
+sca --key=mux           # Start subshell with multiplexed agent (local + remote)
 ```
 
 **Host Management:**
@@ -156,7 +174,15 @@ sca --key=remote        # Start subshell with remote key
 sca --list              # List all configured hosts
 sca --find hostname     # Find and display information about a specific host
 sca --add hostname      # Add a new host to the configuration
-sca --ssh [user@]host   # Connect to a specific host
+sca --ssh [args...]     # Connect directly via ssh (all args passed to ssh)
+```
+
+**Direct SSH Connection:**
+```bash
+sca --ssh user@host                    # Connect using remote agent (default)
+sca --key=local --ssh user@host        # Connect using local agent
+sca --key=mux --ssh -p9922 user@host  # Connect using multiplexed agent with options
+sca --key=remote --ssh host command    # Execute command on remote host
 ```
 
 **Advanced Options:**

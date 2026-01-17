@@ -489,22 +489,30 @@ Options:
   -e, --env             Output environment variables in shell format (like ssh-agent -s)
                         Use with: eval \`$SCA_SCRIPT -e --key=local\` to set SSH_AUTH_SOCK in current shell
   -l, --level LEVEL     Set security level (0-3, default: auto-detect)
-  --key=local|remote    Specify which key to use (required for new connections)
+  --key=local|remote|mux  Specify which key to use (default: remote)
+                           local:  Use local SSH agent only
+                           remote: Use remote SSH agent only (default)
+                           mux:    Use multiplexed agent (combines local + remote)
   --mux=python|rust     Choose multiplexer type (default: python)
   --list                List all configured hosts
   --find HOSTNAME       Find and display information about a specific host
   --add HOSTNAME        Add a new host to the configuration
-  -s, --ssh [user@]host Connect to a specific host
+  -s, --ssh [args...]   Connect directly via ssh with specified agent
+                        All arguments after --ssh are passed directly to ssh
+                        Use with --key to select agent: local, remote, or mux
   --kill                Kill all agents and remote connections, remove socket files
 
 Examples:
   $SCA_SCRIPT --key=local                    # Start subshell with local key
-  $SCA_SCRIPT --key=remote                   # Start subshell with remote key
-  eval \`$SCA_SCRIPT -e\`         # Set SSH_AUTH_SOCK in current shell
+  $SCA_SCRIPT --key=remote                   # Start subshell with remote key (default)
+  $SCA_SCRIPT --key=mux                      # Start subshell with multiplexed agent
+  eval \`$SCA_SCRIPT -e --key=local\`         # Set SSH_AUTH_SOCK in current shell
   $SCA_SCRIPT --list                          # List all configured hosts
   $SCA_SCRIPT --find myserver                 # Find host 'myserver'
-  $SCA_SCRIPT --ssh myserver                  # Connect to 'myserver'
-  $SCA_SCRIPT --wait (or -w)                  # Run in background monitoring mode
+  $SCA_SCRIPT --ssh myserver                  # Connect to 'myserver' (uses remote agent)
+  $SCA_SCRIPT --key=local --ssh user@host     # Connect using local agent
+  $SCA_SCRIPT --key=mux --ssh -p9922 host    # Connect using multiplexed agent with custom port
+  $SCA_SCRIPT --wait                          # Run in background monitoring mode
   $SCA_SCRIPT --kill                          # Clean up all agents and connections"
 
 #==============================================================================

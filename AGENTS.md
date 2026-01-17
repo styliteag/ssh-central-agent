@@ -47,8 +47,11 @@ This is the primary tool for interaction. It creates a subshell with `SSH_AUTH_S
 # Start SSH gateway with local key
 ./sca --key=local
 
-# Start with remote key
+# Start with remote key (default)
 ./sca --key=remote
+
+# Start with multiplexed agent (local + remote)
+./sca --key=mux
 
 # List all configured hosts
 ./sca --list
@@ -56,8 +59,14 @@ This is the primary tool for interaction. It creates a subshell with `SSH_AUTH_S
 # Find a specific host
 ./sca --find <hostname>
 
-# Connect to specific host
+# Connect to specific host (uses remote agent by default)
 ./sca --ssh <hostname>
+
+# Connect using local agent
+./sca --key=local --ssh <hostname>
+
+# Connect using multiplexed agent
+./sca --key=mux --ssh <hostname>
 
 # Start and wait for connection (useful for background agents)
 ./sca --wait
