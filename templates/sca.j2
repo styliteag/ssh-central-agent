@@ -60,8 +60,7 @@ MYSSH=
 ORG_ARGS=$*
 ORG_SSH_AUTH_SOCK=$SSH_AUTH_SOCK
 SSH_MODE=0                # Direct SSH connection mode
-SSH_HOST=                 # Host for SSH connection
-SSH_ARGS=                 # Additional arguments for SSH
+SSH_ARGS=                 # Arguments for SSH command
 # CMD will be set after argument parsing
 
 # Include helper functions
@@ -393,15 +392,10 @@ while [ $# -gt 0 ]; do
       exit 1
       ;;
     -s|--ssh|--connect)
-      if [ -z "$2" ]; then
-        log_error "Option $1 requires an argument"
-        exit 1
-      fi
-      SSH_MODE=1
-      SSH_HOST="$2"
-      shift 2
-      # Collect all remaining arguments for SSH
+      shift
+      # Collect all remaining arguments for SSH (everything after --ssh)
       SSH_ARGS="$*"
+      SSH_MODE=1
       # Clear remaining args so they don't get processed as options
       set --
       ;;
@@ -447,15 +441,10 @@ while [ $# -gt 0 ]; do
             OPTARG="${OPTARG#?}"
             ;;
           s)
-            if [ -z "$2" ]; then
-              log_error "Option -s requires an argument"
-              exit 1
-            fi
-            SSH_MODE=1
-            SSH_HOST="$2"
             shift
-            # Collect all remaining arguments for SSH
+            # Collect all remaining arguments for SSH (everything after -s)
             SSH_ARGS="$*"
+            SSH_MODE=1
             # Clear remaining args so they don't get processed as options
             set --
             OPTARG=""
@@ -972,12 +961,8 @@ elif [ "$SSH_MODE" == "1" ]; then
   # SSH Mode: Direct SSH connection with IdentityAgent
   #------------------------------------------------------------------------------
   SSH_SOCKET="/Users/bonis/.ssh/scadev-mux.sock"
-  log_info "Connecting to $SSH_HOST with IdentityAgent=$SSH_SOCKET"
-  if [ -n "$SSH_ARGS" ]; then
-    ssh -oIdentityAgent="$SSH_SOCKET" "$SSH_HOST" $SSH_ARGS
-  else
-    ssh -oIdentityAgent="$SSH_SOCKET" "$SSH_HOST"
-  fi
+  log_info "Connecting with IdentityAgent=$SSH_SOCKET: ssh $SSH_ARGS"
+  ssh -oIdentityAgent="$SSH_SOCKET" $SSH_ARGS
   exit $?
   
 elif [ -n "$MYSSH" ]; then
