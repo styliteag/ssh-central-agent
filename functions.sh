@@ -815,6 +815,10 @@ while [ $# -gt 0 ]; do
       KEY=remote
       shift
       ;;
+    --key=mux)
+      KEY=mux
+      shift
+      ;;
     --mux=*)
       MUX_TYPE="${1#*=}"
       shift
@@ -1401,9 +1405,18 @@ elif [ "$SSH_MODE" == "1" ]; then
   #------------------------------------------------------------------------------
   # Disable cleanup trap since we're not starting any background processes
   trap - EXIT INT TERM
-  SSH_SOCKET="/Users/bonis/.ssh/scadev-mux.sock"
+  # Select socket based on --key option (default: remote)
+  if [ "$KEY" == "mux" ]; then
+    SSH_SOCKET="$MUX_SSH_AUTH_SOCK"
+  elif [ "$KEY" == "local" ]; then
+    SSH_SOCKET="$ORG_SSH_AUTH_SOCK"
+  else
+    # Default to remote (KEY=remote or empty)
+    SSH_SOCKET="$SCA_SSH_AUTH_SOCK"
+  fi
   log_info "Connecting with IdentityAgent=$SSH_SOCKET: ssh $SSH_ARGS"
-  ssh -oIdentityAgent="$SSH_SOCKET" $SSH_ARGS
+  # Use SSH_AUTH_SOCK environment variable to avoid quoting issues with spaces in socket path
+  SSH_AUTH_SOCK="$SSH_SOCKET" eval "ssh $SSH_ARGS"
   exit $?
   
 elif [ -n "$MYSSH" ]; then
