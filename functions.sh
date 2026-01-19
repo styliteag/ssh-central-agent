@@ -1175,6 +1175,11 @@ use_existing_connection() {
     exit 1
   fi
   
+  # Ensure SSH config is patched with jump aliases for this level
+  # This is needed because Ansible might have regenerated the config,
+  # or the level might have changed
+  patch_jump_aliases
+  
   # Don't clean up temporary agent if we're using --mux=none with local key
   # The temporary agent has the local key needed for ProxyCommand authentication
   if [ -n "$TEMP_AGENT_PID" ]; then
