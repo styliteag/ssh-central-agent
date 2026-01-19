@@ -1253,9 +1253,33 @@ use_existing_connection() {
     log_info "Using working remote SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK"
     # If --mux=none or we should skip multiplexer, create symlink from mux socket
     if [ "$MUX_TYPE" = "none" ] || ([ "$USE_IDENTITY_FILE" == "true" ] && [ "$LOCAL_SOCK" == "false" ]); then
-      # If we have a temporary agent (local key), symlink to it (needed for ProxyCommand)
-      # Otherwise, symlink to remote agent
+      # Check if we need temporary agent for ProxyCommand
+      # Only use temporary agent if there's a ProxyCommand (needs local key)
+      # For direct connections, use remote agent (has remote keys)
+      local needs_temp_for_proxy=false
       if [ -n "$TEMP_AGENT_SOCK" ] && [ -S "$TEMP_AGENT_SOCK" ]; then
+        # Check if we have SSH_ARGS (we're about to make an SSH connection)
+        if [ -n "$SSH_ARGS" ]; then
+          local target_host
+          target_host=$(echo "$SSH_ARGS" | awk '{print $1}' | sed 's/.*@//' | sed 's/:.*//')
+          if [ -n "$target_host" ]; then
+            local has_proxycommand
+            has_proxycommand=$(ssh -F "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" -G "$target_host" 2>/dev/null | grep "^proxycommand " || true)
+            if [ -n "$has_proxycommand" ]; then
+              needs_temp_for_proxy=true
+              if [ "${DEBUG:-0}" == "1" ]; then
+                log_debug "Target host '$target_host' has ProxyCommand, will use temporary agent"
+              fi
+            else
+              if [ "${DEBUG:-0}" == "1" ]; then
+                log_debug "Target host '$target_host' has no ProxyCommand (direct connection), will use remote agent"
+              fi
+            fi
+          fi
+        fi
+      fi
+      
+      if [ "$needs_temp_for_proxy" == "true" ]; then
         log_info "Creating symlink from mux socket to temporary agent (has local key for ProxyCommand)"
         if [ "${DEBUG:-0}" == "1" ]; then
           log_debug "Socket setup details:"
@@ -1269,6 +1293,7 @@ use_existing_connection() {
         rm -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || true
         ln -sf "$TEMP_AGENT_SOCK" "$MUX_SSH_AUTH_SOCK"
       else
+        # No ProxyCommand or no temporary agent - use remote agent
         log_info "Creating symlink from mux socket to remote agent"
         if [ "${DEBUG:-0}" == "1" ]; then
           log_debug "Socket setup details:"
