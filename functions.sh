@@ -740,7 +740,13 @@ execute_command_or_shell() {
     fi
     log_info "Connecting via SSH config (IdentityAgent will use $SSH_SOCKET): ssh $SSH_ARGS"
     # SSH config already has IdentityAgent set to mux socket, so just run ssh normally
-    eval "ssh -F $PLAYBOOK_DIR/$SSH_CONFIG_FILE $SSH_ARGS"
+    local ssh_cmd="ssh -F $PLAYBOOK_DIR/$SSH_CONFIG_FILE $SSH_ARGS"
+    if [ "${DEBUG:-0}" == "1" ]; then
+      log_debug "Executing SSH command: $ssh_cmd"
+      log_debug "SSH_AUTH_SOCK environment variable: ${SSH_AUTH_SOCK:-not set}"
+      log_debug "Command will be executed with: eval"
+    fi
+    eval "$ssh_cmd"
     exit $?
     
   elif [ -n "$CMD" ]; then
