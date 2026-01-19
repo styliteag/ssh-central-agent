@@ -1099,6 +1099,12 @@ validate_local_agent() {
       if setup_temp_agent "$IDENTITY_FILE"; then
         LOCAL_SOCK=true  # We now have a temporary agent
         log_info "Using temporary SSH agent for initial connections"
+        # Auto-detect: if no local agent and using identity file, use --mux=none
+        # (unless explicitly set by user via --mux=python or --mux=rust)
+        if [ "$MUX_TYPE" == "python" ] || [ "$MUX_TYPE" == "rust" ]; then
+          MUX_TYPE="none"
+          log_info "Auto-detected --mux=none (no local agent, using identity file)"
+        fi
       else
         log_error "Failed to set up temporary SSH agent"
         exit 1
@@ -1123,6 +1129,12 @@ validate_local_agent() {
         if setup_temp_agent "$IDENTITY_FILE"; then
           LOCAL_SOCK=true  # We now have a temporary agent
           log_info "Using temporary SSH agent for initial connections"
+          # Auto-detect: if local agent has no keys and using identity file, use --mux=none
+          # (unless explicitly set by user via --mux=python or --mux=rust)
+          if [ "$MUX_TYPE" == "python" ] || [ "$MUX_TYPE" == "rust" ]; then
+            MUX_TYPE="none"
+            log_info "Auto-detected --mux=none (local agent empty, using identity file)"
+          fi
         else
           log_error "Failed to set up temporary SSH agent"
           exit 1
