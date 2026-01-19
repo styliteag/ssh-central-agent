@@ -703,8 +703,15 @@ execute_command_or_shell() {
       exit 1
     fi
     log_info "Connecting with IdentityAgent=$SSH_SOCKET: ssh $SSH_ARGS"
+    # Verify socket has keys before connecting
+    if [ -n "$TEMP_AGENT_SOCK" ] && [ "$SSH_SOCKET" = "$TEMP_AGENT_SOCK" ]; then
+      log_debug "Verifying temporary agent has keys: SSH_AUTH_SOCK=$SSH_SOCKET ssh-add -l"
+      SSH_AUTH_SOCK="$SSH_SOCKET" ssh-add -l >&2 || log_warn "Temporary agent has no keys or is not accessible"
+    fi
     # Use -o IdentityAgent to explicitly specify the agent socket
-    eval "ssh -o 'IdentityAgent \"$SSH_SOCKET\"' -o 'IdentityFile none' $SSH_ARGS"
+    # Use equals format and specify config file (same as build_ssh_cmd)
+    # Use IdentitiesOnly=yes to prevent SSH from trying identity files
+    eval "ssh -F $PLAYBOOK_DIR/$SSH_CONFIG_FILE -o IdentityAgent=$SSH_SOCKET -o IdentitiesOnly=yes $SSH_ARGS"
     local ssh_exit_code=$?
     # Clean up temporary agent after SSH connection (if we used it)
     if [ -n "$TEMP_AGENT_PID" ] && [ "$MUX_TYPE" = "none" ]; then
