@@ -368,6 +368,7 @@ cleanup() {
     [ -n "$MUX_PID" ] && has_cleanup=true
     [ -n "$TAIL_LOG_PID" ] && has_cleanup=true
     [ -n "$RUST_MUX_LOG" ] && [ -f "$RUST_MUX_LOG" ] && has_cleanup=true
+    [ -n "$TEMP_AGENT_PID" ] && has_cleanup=true
     
     if [ "$has_cleanup" != "true" ]; then
         return
@@ -419,6 +420,11 @@ cleanup() {
         rm -f "$RUST_MUX_LOG" 2>/dev/null || true
     fi
     
+    # Clean up temporary SSH agent if it exists
+    if [ -n "$TEMP_AGENT_PID" ]; then
+        cleanup_temp_agent
+    fi
+    
     log_info "Cleanup complete"
 }
 
@@ -462,10 +468,88 @@ find_identity_file() {
     return 1
 }
 
+# Setup temporary SSH agent for identity file
+setup_temp_agent() {
+    local identity_file=$1
+    local temp_socket temp_pid
+    
+    if [ -z "$identity_file" ] || [ ! -f "$identity_file" ]; then
+        log_error "Invalid identity file: $identity_file"
+        return 1
+    fi
+    
+    log_info "Creating temporary SSH agent for identity file..."
+    
+    # Start ssh-agent and capture output
+    local agent_output
+    agent_output=$(ssh-agent -s 2>/dev/null)
+    if [ $? -ne 0 ]; then
+        log_error "Failed to start temporary SSH agent"
+        return 1
+    fi
+    
+    # Extract socket and PID from agent output
+    # Handle formats like: SSH_AUTH_SOCK=/tmp/ssh-XXXXXX/agent.12345; export SSH_AUTH_SOCK;
+    # or: SSH_AUTH_SOCK=/tmp/ssh-XXXXXX/agent.12345
+    temp_socket=$(echo "$agent_output" | grep "SSH_AUTH_SOCK" | sed -E 's/.*SSH_AUTH_SOCK=([^;[:space:]]+).*/\1/' | head -1)
+    temp_pid=$(echo "$agent_output" | grep "SSH_AGENT_PID" | sed -E 's/.*SSH_AGENT_PID=([^;[:space:]]+).*/\1/' | head -1)
+    
+    if [ -z "$temp_socket" ] || [ -z "$temp_pid" ]; then
+        log_error "Failed to parse ssh-agent output"
+        log_debug "ssh-agent output: $agent_output"
+        return 1
+    fi
+    
+    # Export variables for use in this shell
+    export SSH_AUTH_SOCK="$temp_socket"
+    export SSH_AGENT_PID="$temp_pid"
+    
+    # Add the identity file to the agent (this will prompt for passphrase once)
+    log_info "Adding identity file to temporary agent (you will be prompted for passphrase once)..."
+    if ! ssh-add "$identity_file"; then
+        log_error "Failed to add identity file to temporary agent"
+        cleanup_temp_agent
+        return 1
+    fi
+    
+    # Set global variables
+    TEMP_AGENT_SOCK="$temp_socket"
+    TEMP_AGENT_PID="$temp_pid"
+    
+    log_success "Temporary SSH agent created (PID: $temp_pid, Socket: $temp_socket)"
+    return 0
+}
+
+# Cleanup temporary SSH agent
+cleanup_temp_agent() {
+    if [ -n "$TEMP_AGENT_PID" ]; then
+        if kill -0 "$TEMP_AGENT_PID" 2>/dev/null; then
+            log_info "Stopping temporary SSH agent (PID $TEMP_AGENT_PID)"
+            kill -TERM "$TEMP_AGENT_PID" 2>/dev/null || true
+            # Wait a bit for clean shutdown
+            sleep 0.5
+            # Force kill if still running
+            if kill -0 "$TEMP_AGENT_PID" 2>/dev/null; then
+                kill -KILL "$TEMP_AGENT_PID" 2>/dev/null || true
+            fi
+        fi
+        TEMP_AGENT_PID=""
+    fi
+    
+    if [ -n "$TEMP_AGENT_SOCK" ] && [ -S "$TEMP_AGENT_SOCK" ]; then
+        log_info "Removing temporary SSH agent socket: $TEMP_AGENT_SOCK"
+        rm -f "$TEMP_AGENT_SOCK" 2>/dev/null || true
+        TEMP_AGENT_SOCK=""
+    fi
+}
+
 # Build SSH command with optional identity file
 build_ssh_cmd() {
     local cmd="ssh -a -F $PLAYBOOK_DIR/$SSH_CONFIG_FILE"
-    if [ "$USE_IDENTITY_FILE" == "true" ] && [ -n "$IDENTITY_FILE" ]; then
+    # If we have a temporary agent, use it instead of -i to avoid multiple passphrase prompts
+    if [ -n "$TEMP_AGENT_SOCK" ]; then
+        cmd="$cmd -o IdentityAgent \"$TEMP_AGENT_SOCK\""
+    elif [ "$USE_IDENTITY_FILE" == "true" ] && [ -n "$IDENTITY_FILE" ]; then
         cmd="$cmd -i \"$IDENTITY_FILE\""
     fi
     echo "$cmd"
@@ -759,6 +843,14 @@ setup_new_connection() {
 
   log_success "Successfully started a remote agent at $SCA_SSH_AUTH_SOCK"
   
+  # Clean up temporary agent if we used one (no longer needed after remote agent is established)
+  if [ -n "$TEMP_AGENT_PID" ]; then
+    log_info "Cleaning up temporary SSH agent (remote agent is now available)"
+    cleanup_temp_agent
+    # Reset LOCAL_SOCK since we no longer have the temporary agent
+    LOCAL_SOCK=false
+  fi
+  
   # Setup Agent Multiplexer (only if we have a local agent)
   SKIP_MULTIPLEXER=false
   if [ "$USE_IDENTITY_FILE" == "true" ] && [ "$LOCAL_SOCK" == "false" ]; then
@@ -834,6 +926,14 @@ validate_local_agent() {
     if [ -n "$IDENTITY_FILE" ]; then
       USE_IDENTITY_FILE=true
       log_success "Found identity file: $IDENTITY_FILE"
+      # Create temporary agent to avoid multiple passphrase prompts
+      if setup_temp_agent "$IDENTITY_FILE"; then
+        LOCAL_SOCK=true  # We now have a temporary agent
+        log_info "Using temporary SSH agent for initial connections"
+      else
+        log_error "Failed to set up temporary SSH agent"
+        exit 1
+      fi
     else
       log_error 'No local SSH agent or identity file found.'
       log_error 'Either start an agent with "eval $(ssh-agent)" and add your keys,'
@@ -850,6 +950,14 @@ validate_local_agent() {
       if [ -n "$IDENTITY_FILE" ]; then
         USE_IDENTITY_FILE=true
         log_success "Found identity file: $IDENTITY_FILE (will use instead of empty agent)"
+        # Create temporary agent to avoid multiple passphrase prompts
+        if setup_temp_agent "$IDENTITY_FILE"; then
+          LOCAL_SOCK=true  # We now have a temporary agent
+          log_info "Using temporary SSH agent for initial connections"
+        else
+          log_error "Failed to set up temporary SSH agent"
+          exit 1
+        fi
       else
         log_error "You have no key in your local agent and no identity file found!"
         exit 1
@@ -913,6 +1021,12 @@ use_existing_connection() {
   if [ $? -ne 0 ]; then
     log_error "Failed to determine security level for existing connection"
     exit 1
+  fi
+  
+  # Clean up temporary agent if we used one (shouldn't normally happen with existing connections)
+  if [ -n "$TEMP_AGENT_PID" ]; then
+    log_info "Cleaning up temporary SSH agent (existing connection found)"
+    cleanup_temp_agent
   fi
   
   if [ -n "$LEVEL" ]; then
