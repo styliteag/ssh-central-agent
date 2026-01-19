@@ -717,16 +717,25 @@ execute_command_or_shell() {
     # If we're using a temporary agent, we need to modify the ProxyCommand to use it
     # The ProxyCommand runs "ssh -W" which uses the config file's IdentityAgent
     if [ -n "$TEMP_AGENT_SOCK" ] && [ "$SSH_SOCKET" = "$TEMP_AGENT_SOCK" ]; then
-      # Override ProxyCommand to explicitly pass IdentityAgent to inner SSH
-      local original_proxycmd
-      original_proxycmd=$(ssh -F "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" -G "$(echo "$SSH_ARGS" | awk '{print $1}')" 2>/dev/null | grep "^proxycommand " | cut -d' ' -f2-)
-      if [ -n "$original_proxycmd" ]; then
-        # Modify ProxyCommand to inject IdentityAgent into the inner ssh -W command
-        # Replace "ssh -W" with "ssh -o IdentityAgent=$SSH_SOCKET -W"
-        local modified_proxycmd
-        modified_proxycmd=$(echo "$original_proxycmd" | sed "s|ssh -W|ssh -o IdentityAgent=$SSH_SOCKET -W|g")
-        ssh_cmd="$ssh_cmd -o ProxyCommand=\"$modified_proxycmd\""
-        log_debug "Modified ProxyCommand to use temporary agent: $modified_proxycmd"
+      local target_host
+      target_host=$(echo "$SSH_ARGS" | awk '{print $1}')
+      if [ -n "$target_host" ]; then
+        # Override ProxyCommand to explicitly pass IdentityAgent to inner SSH
+        local original_proxycmd
+        original_proxycmd=$(ssh -F "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" -G "$target_host" 2>/dev/null | grep "^proxycommand " | sed 's/^proxycommand //')
+        if [ -n "$original_proxycmd" ]; then
+          log_debug "Original ProxyCommand: $original_proxycmd"
+          # Modify ProxyCommand to inject IdentityAgent into the inner ssh -W command
+          # Replace "ssh -W" with "ssh -o IdentityAgent=$SSH_SOCKET -W"
+          local modified_proxycmd
+          modified_proxycmd=$(echo "$original_proxycmd" | sed "s|ssh -W|ssh -o IdentityAgent=$SSH_SOCKET -W|g")
+          # Escape the ProxyCommand properly for SSH -o option
+          # Use single quotes to avoid shell expansion issues
+          ssh_cmd="$ssh_cmd -o ProxyCommand='$modified_proxycmd'"
+          log_debug "Modified ProxyCommand to use temporary agent: $modified_proxycmd"
+        else
+          log_debug "No ProxyCommand found in SSH config for host $target_host"
+        fi
       fi
     fi
     
