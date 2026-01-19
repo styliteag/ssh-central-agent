@@ -780,8 +780,11 @@ execute_command_or_shell() {
         fi
       fi
       log_debug "Command will be executed with: eval"
+      log_debug "Environment variables that will be set:"
+      log_debug "  SSH_AUTH_SOCK=$SSH_AUTH_SOCK"
     fi
-    eval "$ssh_cmd"
+    # Ensure SSH_AUTH_SOCK is set so ProxyCommand's inner ssh -W also uses the agent
+    SSH_AUTH_SOCK="$SSH_SOCKET" eval "$ssh_cmd"
     local ssh_exit_code=$?
     # Clean up temporary agent after SSH connection if we used it
     if [ -n "$TEMP_AGENT_PID" ] && ([ "$MUX_TYPE" = "none" ] || ([ "$USE_IDENTITY_FILE" == "true" ] && [ "$LOCAL_SOCK" == "false" ])); then
