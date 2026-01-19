@@ -726,10 +726,10 @@ execute_command_or_shell() {
         if [ -n "$original_proxycmd" ]; then
           log_debug "Original ProxyCommand: $original_proxycmd"
           # Modify ProxyCommand to inject IdentityAgent into the inner ssh -W command
-          # The inner ssh -W also needs -F to use the config file, and -o IdentityAgent to override config
-          # Replace "ssh -W" with "ssh -F $PLAYBOOK_DIR/$SSH_CONFIG_FILE -o IdentityAgent=$SSH_SOCKET -W"
+          # The inner ssh -W also needs -F to use the config file, and options to override config
+          # Replace "ssh -W" with "ssh -F ... -o IdentityAgent=... -o IdentitiesOnly=yes -o IdentityFile=none -W"
           local modified_proxycmd
-          modified_proxycmd=$(echo "$original_proxycmd" | sed "s|ssh -W|ssh -F $PLAYBOOK_DIR/$SSH_CONFIG_FILE -o IdentityAgent=$SSH_SOCKET -W|g")
+          modified_proxycmd=$(echo "$original_proxycmd" | sed "s|ssh -W|ssh -F $PLAYBOOK_DIR/$SSH_CONFIG_FILE -o IdentityAgent=$SSH_SOCKET -o IdentitiesOnly=yes -o IdentityFile=none -W|g")
           # Escape the ProxyCommand properly for SSH -o option
           # Use single quotes to avoid shell expansion issues
           ssh_cmd="$ssh_cmd -o ProxyCommand='$modified_proxycmd'"
