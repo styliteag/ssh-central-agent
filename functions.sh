@@ -823,6 +823,9 @@ execute_command_or_shell() {
     # Ensure SSH_AUTH_SOCK is set so ProxyCommand's inner ssh -W also uses the agent
     SSH_AUTH_SOCK="$SSH_SOCKET" eval "$ssh_cmd"
     local ssh_exit_code=$?
+    if [ $ssh_exit_code -ne 0 ]; then
+      log_error "SSH command failed with exit code $ssh_exit_code"
+    fi
     # Clean up temporary agent after SSH connection if we used it
     if [ -n "$TEMP_AGENT_PID" ] && ([ "$MUX_TYPE" = "none" ] || ([ "$USE_IDENTITY_FILE" == "true" ] && [ "$LOCAL_SOCK" == "false" ])); then
       log_info "Cleaning up temporary SSH agent after SSH connection"
