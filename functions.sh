@@ -760,13 +760,18 @@ execute_command_or_shell() {
         local modified_proxycommand
         modified_proxycommand=$(echo "$proxycommand" | sed "s|ssh -W|ssh -o IdentityAgent=$TEMP_AGENT_SOCK -W|g")
         if [ "$modified_proxycommand" != "$proxycommand" ]; then
-          # Use equals format to avoid quote issues: -o ProxyCommand=value
-          # The ProxyCommand may contain quotes, so we need to be careful
-          ssh_cmd="$ssh_cmd -o ProxyCommand=$modified_proxycommand"
+          # Escape the ProxyCommand properly for SSH option
+          # Use printf %q to properly escape, or manually escape quotes
+          # For SSH -o ProxyCommand, we can use single quotes to wrap the value
+          # But the value itself may contain single quotes, so we need to escape them
+          local escaped_proxycommand
+          escaped_proxycommand=$(printf '%q' "$modified_proxycommand")
+          ssh_cmd="$ssh_cmd -o ProxyCommand=$escaped_proxycommand"
           log_info "ProxyCommand modified to use temporary agent for inner ssh -W to sca-jump"
           if [ "${DEBUG:-0}" == "1" ]; then
             log_debug "Original ProxyCommand: $proxycommand"
             log_debug "Modified ProxyCommand: $modified_proxycommand"
+            log_debug "Escaped ProxyCommand: $escaped_proxycommand"
             log_debug "Temporary agent socket: $TEMP_AGENT_SOCK"
           fi
         fi
