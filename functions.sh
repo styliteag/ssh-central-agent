@@ -781,7 +781,12 @@ execute_command_or_shell() {
       fi
       log_debug "Command will be executed with: eval"
       log_debug "Environment variables that will be set:"
-      log_debug "  SSH_AUTH_SOCK=$SSH_AUTH_SOCK"
+      log_debug "  SSH_AUTH_SOCK=$SSH_SOCKET (will be set to this value)"
+      # Verify the agent socket before executing
+      log_debug "Verifying agent socket before SSH execution:"
+      SSH_AUTH_SOCK="$SSH_SOCKET" ssh-add -l 2>&1 | while IFS= read -r line; do
+        log_debug "  Agent keys: $line"
+      done
     fi
     # Ensure SSH_AUTH_SOCK is set so ProxyCommand's inner ssh -W also uses the agent
     SSH_AUTH_SOCK="$SSH_SOCKET" eval "$ssh_cmd"
