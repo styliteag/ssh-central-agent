@@ -745,22 +745,30 @@ execute_command_or_shell() {
     if [ "${DEBUG:-0}" == "1" ]; then
       ssh_cmd="$ssh_cmd -v"
     fi
-    # If we have a ProxyCommand, the inner ssh -W connects to sca-jump
-    # That connection should use the remote agent (YubiKey), not the temporary agent
-    # We explicitly set IdentityAgent to the remote agent to override the SSH config
+    # If we have a ProxyCommand, we need to modify it to use the temporary agent for inner ssh -W
+    # The ProxyCommand's inner ssh -W connects to sca-jump and needs the local key (temporary agent)
+    # The main connection should use the remote agent (via mux socket which points to remote agent)
     local target_host
     target_host=$(echo "$SSH_ARGS" | awk '{print $1}' | sed 's/.*@//' | sed 's/:.*//')
-    if [ -n "$target_host" ]; then
-      local has_proxycommand
-      has_proxycommand=$(ssh -F "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" -G "$target_host" 2>/dev/null | grep "^proxycommand " || true)
-      if [ -n "$has_proxycommand" ] && [ -S "$SCA_SSH_AUTH_SOCK" ]; then
-        # ProxyCommand detected - explicitly set IdentityAgent to remote agent
-        # This ensures the ProxyCommand's inner ssh -W (connecting to sca-jump) uses the remote agent
-        ssh_cmd="$ssh_cmd -o IdentityAgent=$SCA_SSH_AUTH_SOCK"
-        if [ "${DEBUG:-0}" == "1" ]; then
-          log_debug "ProxyCommand detected, explicitly setting IdentityAgent=$SCA_SSH_AUTH_SOCK (remote agent) for inner ssh -W to sca-jump"
+    if [ -n "$target_host" ] && [ -n "$TEMP_AGENT_SOCK" ] && [ -S "$TEMP_AGENT_SOCK" ]; then
+      local proxycommand
+      proxycommand=$(ssh -F "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" -G "$target_host" 2>/dev/null | grep "^proxycommand " | sed 's/^proxycommand //' || true)
+      if [ -n "$proxycommand" ]; then
+        # Modify ProxyCommand to inject -o IdentityAgent=$TEMP_AGENT_SOCK into inner ssh -W
+        # The ProxyCommand format is: sh -c "socat ... || ssh -W ... sca-jump"
+        # We need to inject -o IdentityAgent=$TEMP_AGENT_SOCK before -W
+        local modified_proxycommand
+        modified_proxycommand=$(echo "$proxycommand" | sed "s|ssh -W|ssh -o IdentityAgent=$TEMP_AGENT_SOCK -W|g")
+        if [ "$modified_proxycommand" != "$proxycommand" ]; then
+          ssh_cmd="$ssh_cmd -o ProxyCommand=\"$modified_proxycommand\""
+          if [ "${DEBUG:-0}" == "1" ]; then
+            log_debug "ProxyCommand detected, modified to use temporary agent ($TEMP_AGENT_SOCK) for inner ssh -W to sca-jump"
+            log_debug "Original ProxyCommand: $proxycommand"
+            log_debug "Modified ProxyCommand: $modified_proxycommand"
+          fi
         fi
       fi
+    fi
     fi
     ssh_cmd="$ssh_cmd $SSH_ARGS"
     if [ "${DEBUG:-0}" == "1" ]; then
@@ -1029,37 +1037,29 @@ setup_new_connection() {
     done
   else
     # No multiplexer - use remote agent directly (identity file only mode or --mux=none)
-    # If we have a temporary agent (local key), symlink to it (needed for ProxyCommand)
-    # Otherwise, symlink to remote agent
-    if [ -n "$TEMP_AGENT_SOCK" ] && [ -S "$TEMP_AGENT_SOCK" ]; then
-      log_info "No multiplexer, creating symlink from mux socket to temporary agent (has local key for ProxyCommand)"
-      if [ "${DEBUG:-0}" == "1" ]; then
-        log_debug "Socket setup details:"
-        log_debug "  Temporary agent socket: $TEMP_AGENT_SOCK"
-        log_debug "  Mux socket path: $MUX_SSH_AUTH_SOCK"
+    # Always symlink mux socket to remote agent
+    # The temporary agent (if any) is only used via -o IdentityAgent for ProxyCommand authentication
+    log_info "No multiplexer, creating symlink from mux socket to remote agent"
+    if [ "${DEBUG:-0}" == "1" ]; then
+      log_debug "Socket setup details:"
+      log_debug "  Remote agent socket: $SCA_SSH_AUTH_SOCK"
+      log_debug "  Mux socket path: $MUX_SSH_AUTH_SOCK"
+      if [ -S "$SCA_SSH_AUTH_SOCK" ]; then
+        log_debug "  Remote agent keys:"
+        SSH_AUTH_SOCK="$SCA_SSH_AUTH_SOCK" ssh-add -l 2>&1 | while IFS= read -r line; do
+          log_debug "    $line"
+        done
+      fi
+      if [ -n "$TEMP_AGENT_SOCK" ] && [ -S "$TEMP_AGENT_SOCK" ]; then
+        log_debug "  Temporary agent (for ProxyCommand): $TEMP_AGENT_SOCK"
         log_debug "  Temporary agent keys:"
         SSH_AUTH_SOCK="$TEMP_AGENT_SOCK" ssh-add -l 2>&1 | while IFS= read -r line; do
           log_debug "    $line"
         done
       fi
-      rm -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || true
-      ln -sf "$TEMP_AGENT_SOCK" "$MUX_SSH_AUTH_SOCK"
-    else
-      log_info "No multiplexer, creating symlink from mux socket to remote agent"
-      if [ "${DEBUG:-0}" == "1" ]; then
-        log_debug "Socket setup details:"
-        log_debug "  Remote agent socket: $SCA_SSH_AUTH_SOCK"
-        log_debug "  Mux socket path: $MUX_SSH_AUTH_SOCK"
-        if [ -S "$SCA_SSH_AUTH_SOCK" ]; then
-          log_debug "  Remote agent keys:"
-          SSH_AUTH_SOCK="$SCA_SSH_AUTH_SOCK" ssh-add -l 2>&1 | while IFS= read -r line; do
-            log_debug "    $line"
-          done
-        fi
-      fi
-      rm -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || true
-      ln -sf "$SCA_SSH_AUTH_SOCK" "$MUX_SSH_AUTH_SOCK"
     fi
+    rm -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || true
+    ln -sf "$SCA_SSH_AUTH_SOCK" "$MUX_SSH_AUTH_SOCK"
     if [ "${DEBUG:-0}" == "1" ]; then
       log_debug "  Created symlink: $MUX_SSH_AUTH_SOCK -> $(readlink -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || readlink "$MUX_SSH_AUTH_SOCK")"
       log_debug "  Verifying symlink works:"
@@ -1278,16 +1278,21 @@ use_existing_connection() {
     fi
   fi
   
-  if [ "$needs_temp_agent" == "true" ]; then
-    log_info "Recreating mux socket symlink to temporary agent (has local key for ProxyCommand)"
+  # Always symlink mux socket to remote agent when --mux=none
+  # The temporary agent is only used via -o IdentityAgent for ProxyCommand authentication
+  if [ -S "$SCA_SSH_AUTH_SOCK" ] && check_agent_socket "$SCA_SSH_AUTH_SOCK"; then
+    log_info "Creating symlink from mux socket to remote agent"
     rm -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || true
-    ln -sf "$TEMP_AGENT_SOCK" "$MUX_SSH_AUTH_SOCK"
+    ln -sf "$SCA_SSH_AUTH_SOCK" "$MUX_SSH_AUTH_SOCK"
     if [ "${DEBUG:-0}" == "1" ]; then
       log_debug "  Created symlink: $MUX_SSH_AUTH_SOCK -> $(readlink -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || readlink "$MUX_SSH_AUTH_SOCK")"
-      log_debug "  Temporary agent keys:"
-      SSH_AUTH_SOCK="$MUX_SSH_AUTH_SOCK" ssh-add -l 2>&1 | while IFS= read -r line; do
-        log_debug "    $line"
-      done
+      if [ "$needs_temp_agent" == "true" ]; then
+        log_debug "  Temporary agent (for ProxyCommand): $TEMP_AGENT_SOCK"
+        log_debug "  Temporary agent keys:"
+        SSH_AUTH_SOCK="$TEMP_AGENT_SOCK" ssh-add -l 2>&1 | while IFS= read -r line; do
+          log_debug "    $line"
+        done
+      fi
     fi
     export SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK
     export MUX_SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK
@@ -1324,34 +1329,29 @@ use_existing_connection() {
         fi
       fi
       
-      if [ "$needs_temp_for_proxy" == "true" ]; then
-        log_info "Creating symlink from mux socket to temporary agent (has local key for ProxyCommand)"
-        if [ "${DEBUG:-0}" == "1" ]; then
-          log_debug "Socket setup details:"
-          log_debug "  Temporary agent socket: $TEMP_AGENT_SOCK"
-          log_debug "  Mux socket path: $MUX_SSH_AUTH_SOCK"
-          log_debug "  Temporary agent keys:"
-          SSH_AUTH_SOCK="$TEMP_AGENT_SOCK" ssh-add -l 2>&1 | while IFS= read -r line; do
-            log_debug "    $line"
-          done
-        fi
-        rm -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || true
-        ln -sf "$TEMP_AGENT_SOCK" "$MUX_SSH_AUTH_SOCK"
-      else
-        # No ProxyCommand or no temporary agent - use remote agent
-        log_info "Creating symlink from mux socket to remote agent"
-        if [ "${DEBUG:-0}" == "1" ]; then
-          log_debug "Socket setup details:"
-          log_debug "  Remote agent socket: $SCA_SSH_AUTH_SOCK"
-          log_debug "  Mux socket path: $MUX_SSH_AUTH_SOCK"
+      # Always symlink mux socket to remote agent when --mux=none
+      # The temporary agent (if needed) is only used via -o IdentityAgent in ProxyCommand
+      log_info "Creating symlink from mux socket to remote agent"
+      if [ "${DEBUG:-0}" == "1" ]; then
+        log_debug "Socket setup details:"
+        log_debug "  Remote agent socket: $SCA_SSH_AUTH_SOCK"
+        log_debug "  Mux socket path: $MUX_SSH_AUTH_SOCK"
+        if [ -S "$SCA_SSH_AUTH_SOCK" ]; then
           log_debug "  Remote agent keys:"
           SSH_AUTH_SOCK="$SCA_SSH_AUTH_SOCK" ssh-add -l 2>&1 | while IFS= read -r line; do
             log_debug "    $line"
           done
         fi
-        rm -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || true
-        ln -sf "$SCA_SSH_AUTH_SOCK" "$MUX_SSH_AUTH_SOCK"
+        if [ "$needs_temp_for_proxy" == "true" ] && [ -n "$TEMP_AGENT_SOCK" ] && [ -S "$TEMP_AGENT_SOCK" ]; then
+          log_debug "  Temporary agent (for ProxyCommand): $TEMP_AGENT_SOCK"
+          log_debug "  Temporary agent keys:"
+          SSH_AUTH_SOCK="$TEMP_AGENT_SOCK" ssh-add -l 2>&1 | while IFS= read -r line; do
+            log_debug "    $line"
+          done
+        fi
       fi
+      rm -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || true
+      ln -sf "$SCA_SSH_AUTH_SOCK" "$MUX_SSH_AUTH_SOCK"
       if [ "${DEBUG:-0}" == "1" ]; then
         log_debug "  Created symlink: $MUX_SSH_AUTH_SOCK -> $(readlink -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || readlink "$MUX_SSH_AUTH_SOCK")"
         log_debug "  Verifying symlink works:"
