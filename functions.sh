@@ -1203,8 +1203,37 @@ use_existing_connection() {
   fi
 
   # Determine which socket to use
-  # If we have a temporary agent and --mux=none, we need to recreate the symlink to point to temporary agent
+  # If we have a temporary agent and --mux=none, check if we need it for ProxyCommand
+  # Only use temporary agent if there's a ProxyCommand (needs local key)
+  # For direct connections, use remote agent (has remote keys)
+  local needs_temp_agent=false
   if [ -n "$TEMP_AGENT_SOCK" ] && [ -S "$TEMP_AGENT_SOCK" ] && ([ "$MUX_TYPE" = "none" ] || ([ "$USE_IDENTITY_FILE" == "true" ] && [ "$LOCAL_SOCK" == "false" ])); then
+    # Check if SSH_MODE is set (we're about to make an SSH connection)
+    if [ "$SSH_MODE" == "1" ]; then
+      local target_host
+      target_host=$(echo "$SSH_ARGS" | awk '{print $1}' | sed 's/.*@//' | sed 's/:.*//')
+      if [ -n "$target_host" ]; then
+        local has_proxycommand
+        has_proxycommand=$(ssh -F "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" -G "$target_host" 2>/dev/null | grep "^proxycommand " || true)
+        if [ -n "$has_proxycommand" ]; then
+          needs_temp_agent=true
+          if [ "${DEBUG:-0}" == "1" ]; then
+            log_debug "Target host '$target_host' has ProxyCommand, will use temporary agent for ProxyCommand authentication"
+          fi
+        else
+          if [ "${DEBUG:-0}" == "1" ]; then
+            log_debug "Target host '$target_host' has no ProxyCommand (direct connection), will use remote agent"
+          fi
+        fi
+      fi
+    else
+      # Not in SSH mode, but we might need temp agent for future connections
+      # Default to using it if we have it (conservative approach)
+      needs_temp_agent=true
+    fi
+  fi
+  
+  if [ "$needs_temp_agent" == "true" ]; then
     log_info "Recreating mux socket symlink to temporary agent (has local key for ProxyCommand)"
     rm -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || true
     ln -sf "$TEMP_AGENT_SOCK" "$MUX_SSH_AUTH_SOCK"
