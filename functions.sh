@@ -710,7 +710,26 @@ execute_command_or_shell() {
     fi
     
     # Build the SSH command with all options
+    # The issue is that SSH config file has IdentityAgent set, which overrides command-line options
+    # We need to override the ProxyCommand to ensure it also uses our agent
     local ssh_cmd="ssh -F $PLAYBOOK_DIR/$SSH_CONFIG_FILE"
+    
+    # If we're using a temporary agent, we need to modify the ProxyCommand to use it
+    # The ProxyCommand runs "ssh -W" which uses the config file's IdentityAgent
+    if [ -n "$TEMP_AGENT_SOCK" ] && [ "$SSH_SOCKET" = "$TEMP_AGENT_SOCK" ]; then
+      # Override ProxyCommand to explicitly pass IdentityAgent to inner SSH
+      local original_proxycmd
+      original_proxycmd=$(ssh -F "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" -G "$(echo "$SSH_ARGS" | awk '{print $1}')" 2>/dev/null | grep "^proxycommand " | cut -d' ' -f2-)
+      if [ -n "$original_proxycmd" ]; then
+        # Modify ProxyCommand to inject IdentityAgent into the inner ssh -W command
+        # Replace "ssh -W" with "ssh -o IdentityAgent=$SSH_SOCKET -W"
+        local modified_proxycmd
+        modified_proxycmd=$(echo "$original_proxycmd" | sed "s|ssh -W|ssh -o IdentityAgent=$SSH_SOCKET -W|g")
+        ssh_cmd="$ssh_cmd -o ProxyCommand=\"$modified_proxycmd\""
+        log_debug "Modified ProxyCommand to use temporary agent: $modified_proxycmd"
+      fi
+    fi
+    
     ssh_cmd="$ssh_cmd -o IdentityAgent=$SSH_SOCKET"
     ssh_cmd="$ssh_cmd -o IdentitiesOnly=yes"
     ssh_cmd="$ssh_cmd -o IdentityFile=none"
