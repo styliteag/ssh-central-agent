@@ -744,6 +744,36 @@ execute_command_or_shell() {
     if [ "${DEBUG:-0}" == "1" ]; then
       log_debug "Executing SSH command: $ssh_cmd"
       log_debug "SSH_AUTH_SOCK environment variable: ${SSH_AUTH_SOCK:-not set}"
+      # Show what SSH config resolves to for the target host
+      local target_host
+      target_host=$(echo "$SSH_ARGS" | awk '{print $1}')
+      if [ -n "$target_host" ]; then
+        log_debug "SSH config resolution for host '$target_host':"
+        ssh -F "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" -G "$target_host" 2>/dev/null | grep -E "^(identityagent|proxycommand)" | while IFS= read -r line; do
+          log_debug "  Config: $line"
+        done
+        # Resolve the IdentityAgent path from config
+        local config_identityagent
+        config_identityagent=$(ssh -F "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" -G "$target_host" 2>/dev/null | grep "^identityagent " | sed 's/^identityagent //')
+        if [ -n "$config_identityagent" ]; then
+          log_debug "  SSH config IdentityAgent resolves to: $config_identityagent"
+          if [ -L "$config_identityagent" ]; then
+            local resolved_agent
+            resolved_agent=$(readlink -f "$config_identityagent" 2>/dev/null || readlink "$config_identityagent")
+            log_debug "  Which is a symlink to: $resolved_agent"
+            log_debug "  Keys in resolved agent:"
+            SSH_AUTH_SOCK="$config_identityagent" ssh-add -l 2>&1 | while IFS= read -r line; do
+              log_debug "    $line"
+            done
+          elif [ -S "$config_identityagent" ]; then
+            log_debug "  Which is a regular socket"
+            log_debug "  Keys in this agent:"
+            SSH_AUTH_SOCK="$config_identityagent" ssh-add -l 2>&1 | while IFS= read -r line; do
+              log_debug "    $line"
+            done
+          fi
+        fi
+      fi
       log_debug "Command will be executed with: eval"
     fi
     eval "$ssh_cmd"
