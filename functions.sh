@@ -677,21 +677,17 @@ execute_command_or_shell() {
     exit 0
     
   elif [ "$SSH_MODE" == "1" ]; then
-    # SSH Mode: Direct SSH connection with IdentityAgent
+    # SSH Mode: Direct SSH connection
     # Disable cleanup trap since we're not starting any background processes
     trap - EXIT INT TERM
-    # Select socket based on --key option (default: remote)
-    # If we have a temporary agent and --mux=none, use temporary agent (remote agent doesn't have local keys)
-    if [ -n "$TEMP_AGENT_SOCK" ] && [ "$MUX_TYPE" = "none" ]; then
-      SSH_SOCKET="$TEMP_AGENT_SOCK"
-      log_info "Using temporary agent for SSH connection (--mux=none with local key)"
-    elif [ "$KEY" == "mux" ]; then
+    # Select socket based on --key option (default: mux, which will be symlinked to remote agent if --mux=none)
+    if [ "$KEY" == "mux" ]; then
       SSH_SOCKET="$MUX_SSH_AUTH_SOCK"
     elif [ "$KEY" == "local" ]; then
       SSH_SOCKET="$ORG_SSH_AUTH_SOCK"
     else
-      # Default to remote (KEY=remote or empty)
-      SSH_SOCKET="$SCA_SSH_AUTH_SOCK"
+      # Default to mux (KEY=remote or empty) - mux socket will be symlinked to remote agent if --mux=none
+      SSH_SOCKET="$MUX_SSH_AUTH_SOCK"
     fi
     # Verify socket exists and is working
     if [ ! -S "$SSH_SOCKET" ]; then
@@ -702,80 +698,10 @@ execute_command_or_shell() {
       log_error "Socket is not working: $SSH_SOCKET"
       exit 1
     fi
-    log_info "Connecting with IdentityAgent=$SSH_SOCKET: ssh $SSH_ARGS"
-    # Verify socket has keys before connecting
-    if [ -n "$TEMP_AGENT_SOCK" ] && [ "$SSH_SOCKET" = "$TEMP_AGENT_SOCK" ]; then
-      log_debug "Verifying temporary agent has keys: SSH_AUTH_SOCK=$SSH_SOCKET ssh-add -l"
-      SSH_AUTH_SOCK="$SSH_SOCKET" ssh-add -l >&2 || log_warn "Temporary agent has no keys or is not accessible"
-    fi
-    
-    # Build the SSH command with all options
-    # The issue is that SSH config file has IdentityAgent set, which overrides command-line options
-    # We need to override the ProxyCommand to ensure it also uses our agent
-    local ssh_cmd="ssh -F $PLAYBOOK_DIR/$SSH_CONFIG_FILE"
-    
-    # If we're using a temporary agent, we need to modify the ProxyCommand to use it
-    # The ProxyCommand runs "ssh -W" which uses the config file's IdentityAgent
-    if [ -n "$TEMP_AGENT_SOCK" ] && [ "$SSH_SOCKET" = "$TEMP_AGENT_SOCK" ]; then
-      local target_host
-      target_host=$(echo "$SSH_ARGS" | awk '{print $1}')
-      if [ -n "$target_host" ]; then
-        # Override ProxyCommand to explicitly pass IdentityAgent to inner SSH
-        local original_proxycmd
-        original_proxycmd=$(ssh -F "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" -G "$target_host" 2>/dev/null | grep "^proxycommand " | sed 's/^proxycommand //')
-        if [ -n "$original_proxycmd" ]; then
-          log_debug "Original ProxyCommand: $original_proxycmd"
-          # Modify ProxyCommand to inject IdentityAgent into the inner ssh -W command
-          # The inner ssh -W also needs -F to use the config file, and options to override config
-          # Replace "ssh -W" with "ssh -F ... -o IdentityAgent=... -o IdentitiesOnly=yes -o IdentityFile=none -W"
-          local modified_proxycmd
-          modified_proxycmd=$(echo "$original_proxycmd" | sed "s|ssh -W|ssh -F $PLAYBOOK_DIR/$SSH_CONFIG_FILE -o IdentityAgent=$SSH_SOCKET -o IdentitiesOnly=yes -o IdentityFile=none -W|g")
-          # Escape the ProxyCommand properly for SSH -o option
-          # Use single quotes to avoid shell expansion issues
-          ssh_cmd="$ssh_cmd -o ProxyCommand='$modified_proxycmd'"
-          log_debug "Modified ProxyCommand to use temporary agent: $modified_proxycmd"
-        else
-          log_debug "No ProxyCommand found in SSH config for host $target_host"
-        fi
-      fi
-    fi
-    
-    ssh_cmd="$ssh_cmd -o IdentityAgent=$SSH_SOCKET"
-    ssh_cmd="$ssh_cmd -o IdentitiesOnly=yes"
-    ssh_cmd="$ssh_cmd -o IdentityFile=none"
-    # Add verbose output in debug mode
-    if [ "${DEBUG:-0}" == "1" ]; then
-      ssh_cmd="$ssh_cmd -v"
-      log_debug "SSH command: $ssh_cmd $SSH_ARGS"
-      log_debug "SSH_AUTH_SOCK will be set to: $SSH_SOCKET"
-      log_debug "Checking if socket is accessible: [ -S $SSH_SOCKET ]"
-      [ -S "$SSH_SOCKET" ] && log_debug "Socket exists and is accessible" || log_error "Socket does not exist or is not accessible"
-      log_debug "Testing agent with: SSH_AUTH_SOCK=$SSH_SOCKET ssh-add -l"
-      SSH_AUTH_SOCK="$SSH_SOCKET" ssh-add -l 2>&1 | while IFS= read -r line; do log_debug "Agent test: $line"; done
-      # Show what SSH config says for the target host
-      local target_host
-      target_host=$(echo "$SSH_ARGS" | awk '{print $1}')
-      if [ -n "$target_host" ]; then
-        log_debug "Checking SSH config for host '$target_host':"
-        ssh -F "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" -G "$target_host" 2>/dev/null | grep -E "^(identityagent|identityfile|proxycommand)" | while IFS= read -r line; do
-          log_debug "  Config: $line"
-        done
-      fi
-    fi
-    
-    # Use -o IdentityAgent to explicitly specify the agent socket
-    # Use equals format and specify config file (same as build_ssh_cmd)
-    # Use IdentitiesOnly=yes to prevent SSH from trying identity files
-    # Also set SSH_AUTH_SOCK environment variable so ProxyCommand's SSH also uses the agent
-    # Add IdentityFile=none to prevent any fallback to identity files
-    SSH_AUTH_SOCK="$SSH_SOCKET" eval "$ssh_cmd $SSH_ARGS"
-    local ssh_exit_code=$?
-    # Clean up temporary agent after SSH connection (if we used it)
-    if [ -n "$TEMP_AGENT_PID" ] && [ "$MUX_TYPE" = "none" ]; then
-      log_info "Cleaning up temporary SSH agent after SSH connection"
-      cleanup_temp_agent
-    fi
-    exit $ssh_exit_code
+    log_info "Connecting via SSH config (IdentityAgent will use $SSH_SOCKET): ssh $SSH_ARGS"
+    # SSH config already has IdentityAgent set to mux socket, so just run ssh normally
+    eval "ssh -F $PLAYBOOK_DIR/$SSH_CONFIG_FILE $SSH_ARGS"
+    exit $?
     
   elif [ -n "$CMD" ]; then
     log_info "STARTING: $CMD"
@@ -929,18 +855,13 @@ setup_new_connection() {
   # Setup Agent Multiplexer (only if we have a local agent and mux is not disabled)
   SKIP_MULTIPLEXER=false
   if [ "$MUX_TYPE" = "none" ]; then
-    # Explicitly skip multiplexer
-    log_info "Multiplexer disabled (--mux=none), using remote agent directly"
+    # Explicitly skip multiplexer - will create symlink below
+    log_info "Multiplexer disabled (--mux=none), will use remote agent via symlink"
     SKIP_MULTIPLEXER=true
-    OMUX_SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK
-    OMUX_SSH_AGENT_PID=""
   elif [ "$USE_IDENTITY_FILE" == "true" ] && [ "$LOCAL_SOCK" == "false" ]; then
-    # No local agent, only identity file - skip multiplexer
+    # No local agent, only identity file - skip multiplexer - will create symlink below
     log_info "No local agent detected, skipping multiplexer setup"
-    log_info "Using remote agent directly"
     SKIP_MULTIPLEXER=true
-    OMUX_SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK
-    OMUX_SSH_AGENT_PID=""
   else
     log_info "Muxing the 2 Agents to one"
     USE_RUST_MUX=false
@@ -975,15 +896,18 @@ setup_new_connection() {
     log_success "You can now use this key (even not in this SUBSHELL, thanks to .ssh/config magic)"
     SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK ssh-add -l >&2
   else
-    # No multiplexer - use remote agent directly (identity file only mode)
-    log_info "No local agent detected, using remote agent directly"
-    OMUX_SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK
+    # No multiplexer - use remote agent directly (identity file only mode or --mux=none)
+    # Create symlink from mux socket to remote agent so SSH config's IdentityAgent works
+    log_info "No multiplexer, creating symlink from mux socket to remote agent"
+    rm -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || true
+    ln -sf "$SCA_SSH_AUTH_SOCK" "$MUX_SSH_AUTH_SOCK"
+    OMUX_SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK
     OMUX_SSH_AGENT_PID=""
-    export SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK
-    export MUX_SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK
-    log_info "Verifying with: 'SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK ssh-add -l'"
-    log_success "Using remote agent directly (no local agent to multiplex)"
-    SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK ssh-add -l >&2
+    export SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK
+    export MUX_SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK
+    log_info "Verifying with: 'SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK ssh-add -l'"
+    log_success "Using remote agent via mux socket symlink (no local agent to multiplex)"
+    SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK ssh-add -l >&2
   fi
 }
 
@@ -1104,9 +1028,8 @@ use_existing_connection() {
     exit 1
   fi
   
-  # Don't clean up temporary agent yet if we're in SSH mode with --mux=none
-  # We'll need it for the SSH connection since remote agent doesn't have local keys
-  if [ -n "$TEMP_AGENT_PID" ] && [ "$SSH_MODE" != "1" ] && [ "$MUX_TYPE" != "none" ]; then
+  # Clean up temporary agent if we used one (shouldn't normally happen with existing connections)
+  if [ -n "$TEMP_AGENT_PID" ]; then
     log_info "Cleaning up temporary SSH agent (existing connection found)"
     cleanup_temp_agent
   fi
@@ -1125,8 +1048,17 @@ use_existing_connection() {
     export SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK
   elif [ -S "$SCA_SSH_AUTH_SOCK" ] && check_agent_socket "$SCA_SSH_AUTH_SOCK"; then
     log_info "Using working remote SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK"
-    export SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK
-    export MUX_SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK
+    # If --mux=none or we should skip multiplexer, create symlink from mux socket to remote agent
+    if [ "$MUX_TYPE" = "none" ] || ([ "$USE_IDENTITY_FILE" == "true" ] && [ "$LOCAL_SOCK" == "false" ]); then
+      log_info "Creating symlink from mux socket to remote agent"
+      rm -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || true
+      ln -sf "$SCA_SSH_AUTH_SOCK" "$MUX_SSH_AUTH_SOCK"
+      export SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK
+      export MUX_SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK
+    else
+      export SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK
+      export MUX_SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK
+    fi
   else
     log_error "No working agent socket found"
     exit 1
