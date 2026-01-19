@@ -769,7 +769,6 @@ execute_command_or_shell() {
         fi
       fi
     fi
-    fi
     ssh_cmd="$ssh_cmd $SSH_ARGS"
     if [ "${DEBUG:-0}" == "1" ]; then
       log_debug "Executing SSH command: $ssh_cmd"
