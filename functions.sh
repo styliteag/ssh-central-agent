@@ -1071,9 +1071,16 @@ setup_new_connection() {
     OMUX_SSH_AGENT_PID=""
     export SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK
     export MUX_SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK
-    log_info "Verifying with: 'SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK ssh-add -l'"
+    # Show keys from the remote agent (what users will actually use), not the temporary agent
+    # The temporary agent is only for ProxyCommand authentication
+    local agent_to_show="$MUX_SSH_AUTH_SOCK"
+    if [ -S "$SCA_SSH_AUTH_SOCK" ] && check_agent_socket "$SCA_SSH_AUTH_SOCK"; then
+      # If we have a remote agent, show its keys (YubiKey, etc.)
+      agent_to_show="$SCA_SSH_AUTH_SOCK"
+    fi
+    log_info "Verifying with: 'SSH_AUTH_SOCK=$agent_to_show ssh-add -l'"
     log_success "Using agent via mux socket symlink (no local agent to multiplex)"
-    SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK ssh-add -l 2>&1 | while IFS= read -r line; do
+    SSH_AUTH_SOCK=$agent_to_show ssh-add -l 2>&1 | while IFS= read -r line; do
       log_info "$line"
     done
   fi
@@ -1364,8 +1371,15 @@ use_existing_connection() {
   fi
   
   # Show available keys (similar to setup_new_connection)
-  log_info "Verifying with: 'SSH_AUTH_SOCK=$SSH_AUTH_SOCK ssh-add -l'"
-  SSH_AUTH_SOCK=$SSH_AUTH_SOCK ssh-add -l 2>&1 | while IFS= read -r line; do
+  # Show keys from the remote agent (what users will actually use), not the temporary agent
+  # The temporary agent is only for ProxyCommand authentication
+  local agent_to_show="$SSH_AUTH_SOCK"
+  if [ -S "$SCA_SSH_AUTH_SOCK" ] && check_agent_socket "$SCA_SSH_AUTH_SOCK"; then
+    # If we have a remote agent, show its keys (YubiKey, etc.)
+    agent_to_show="$SCA_SSH_AUTH_SOCK"
+  fi
+  log_info "Verifying with: 'SSH_AUTH_SOCK=$agent_to_show ssh-add -l'"
+  SSH_AUTH_SOCK=$agent_to_show ssh-add -l 2>&1 | while IFS= read -r line; do
     log_info "$line"
   done
 }
