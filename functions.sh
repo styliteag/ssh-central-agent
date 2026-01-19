@@ -681,7 +681,11 @@ execute_command_or_shell() {
     # Disable cleanup trap since we're not starting any background processes
     trap - EXIT INT TERM
     # Select socket based on --key option (default: remote)
-    if [ "$KEY" == "mux" ]; then
+    # If we have a temporary agent and --mux=none, use temporary agent (remote agent doesn't have local keys)
+    if [ -n "$TEMP_AGENT_SOCK" ] && [ "$MUX_TYPE" = "none" ]; then
+      SSH_SOCKET="$TEMP_AGENT_SOCK"
+      log_info "Using temporary agent for SSH connection (--mux=none with local key)"
+    elif [ "$KEY" == "mux" ]; then
       SSH_SOCKET="$MUX_SSH_AUTH_SOCK"
     elif [ "$KEY" == "local" ]; then
       SSH_SOCKET="$ORG_SSH_AUTH_SOCK"
@@ -701,7 +705,13 @@ execute_command_or_shell() {
     log_info "Connecting with IdentityAgent=$SSH_SOCKET: ssh $SSH_ARGS"
     # Use -o IdentityAgent to explicitly specify the agent socket
     eval "ssh -o 'IdentityAgent \"$SSH_SOCKET\"' -o 'IdentityFile none' $SSH_ARGS"
-    exit $?
+    local ssh_exit_code=$?
+    # Clean up temporary agent after SSH connection (if we used it)
+    if [ -n "$TEMP_AGENT_PID" ] && [ "$MUX_TYPE" = "none" ]; then
+      log_info "Cleaning up temporary SSH agent after SSH connection"
+      cleanup_temp_agent
+    fi
+    exit $ssh_exit_code
     
   elif [ -n "$CMD" ]; then
     log_info "STARTING: $CMD"
@@ -1030,8 +1040,9 @@ use_existing_connection() {
     exit 1
   fi
   
-  # Clean up temporary agent if we used one (shouldn't normally happen with existing connections)
-  if [ -n "$TEMP_AGENT_PID" ]; then
+  # Don't clean up temporary agent yet if we're in SSH mode with --mux=none
+  # We'll need it for the SSH connection since remote agent doesn't have local keys
+  if [ -n "$TEMP_AGENT_PID" ] && [ "$SSH_MODE" != "1" ] && [ "$MUX_TYPE" != "none" ]; then
     log_info "Cleaning up temporary SSH agent (existing connection found)"
     cleanup_temp_agent
   fi
