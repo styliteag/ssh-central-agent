@@ -708,12 +708,38 @@ execute_command_or_shell() {
       log_debug "Verifying temporary agent has keys: SSH_AUTH_SOCK=$SSH_SOCKET ssh-add -l"
       SSH_AUTH_SOCK="$SSH_SOCKET" ssh-add -l >&2 || log_warn "Temporary agent has no keys or is not accessible"
     fi
+    
+    # Build the SSH command with all options
+    local ssh_cmd="ssh -F $PLAYBOOK_DIR/$SSH_CONFIG_FILE"
+    ssh_cmd="$ssh_cmd -o IdentityAgent=$SSH_SOCKET"
+    ssh_cmd="$ssh_cmd -o IdentitiesOnly=yes"
+    ssh_cmd="$ssh_cmd -o IdentityFile=none"
+    # Add verbose output in debug mode
+    if [ "${DEBUG:-0}" == "1" ]; then
+      ssh_cmd="$ssh_cmd -v"
+      log_debug "SSH command: $ssh_cmd $SSH_ARGS"
+      log_debug "SSH_AUTH_SOCK will be set to: $SSH_SOCKET"
+      log_debug "Checking if socket is accessible: [ -S $SSH_SOCKET ]"
+      [ -S "$SSH_SOCKET" ] && log_debug "Socket exists and is accessible" || log_error "Socket does not exist or is not accessible"
+      log_debug "Testing agent with: SSH_AUTH_SOCK=$SSH_SOCKET ssh-add -l"
+      SSH_AUTH_SOCK="$SSH_SOCKET" ssh-add -l 2>&1 | while IFS= read -r line; do log_debug "Agent test: $line"; done
+      # Show what SSH config says for the target host
+      local target_host
+      target_host=$(echo "$SSH_ARGS" | awk '{print $1}')
+      if [ -n "$target_host" ]; then
+        log_debug "Checking SSH config for host '$target_host':"
+        ssh -F "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" -G "$target_host" 2>/dev/null | grep -E "^(identityagent|identityfile|proxycommand)" | while IFS= read -r line; do
+          log_debug "  Config: $line"
+        done
+      fi
+    fi
+    
     # Use -o IdentityAgent to explicitly specify the agent socket
     # Use equals format and specify config file (same as build_ssh_cmd)
     # Use IdentitiesOnly=yes to prevent SSH from trying identity files
     # Also set SSH_AUTH_SOCK environment variable so ProxyCommand's SSH also uses the agent
     # Add IdentityFile=none to prevent any fallback to identity files
-    SSH_AUTH_SOCK="$SSH_SOCKET" eval "ssh -F $PLAYBOOK_DIR/$SSH_CONFIG_FILE -o IdentityAgent=$SSH_SOCKET -o IdentitiesOnly=yes -o IdentityFile=none $SSH_ARGS"
+    SSH_AUTH_SOCK="$SSH_SOCKET" eval "$ssh_cmd $SSH_ARGS"
     local ssh_exit_code=$?
     # Clean up temporary agent after SSH connection (if we used it)
     if [ -n "$TEMP_AGENT_PID" ] && [ "$MUX_TYPE" = "none" ]; then
