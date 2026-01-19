@@ -852,9 +852,15 @@ setup_new_connection() {
     LOCAL_SOCK=false
   fi
   
-  # Setup Agent Multiplexer (only if we have a local agent)
+  # Setup Agent Multiplexer (only if we have a local agent and mux is not disabled)
   SKIP_MULTIPLEXER=false
-  if [ "$USE_IDENTITY_FILE" == "true" ] && [ "$LOCAL_SOCK" == "false" ]; then
+  if [ "$MUX_TYPE" = "none" ]; then
+    # Explicitly skip multiplexer
+    log_info "Multiplexer disabled (--mux=none), using remote agent directly"
+    SKIP_MULTIPLEXER=true
+    OMUX_SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK
+    OMUX_SSH_AGENT_PID=""
+  elif [ "$USE_IDENTITY_FILE" == "true" ] && [ "$LOCAL_SOCK" == "false" ]; then
     # No local agent, only identity file - skip multiplexer
     log_info "No local agent detected, skipping multiplexer setup"
     log_info "Using remote agent directly"
@@ -1454,7 +1460,10 @@ Options:
                            local:  Use local SSH agent only
                            remote: Use remote SSH agent only (default)
                            mux:    Use multiplexed agent (combines local + remote)
-  --mux=python|rust     Choose multiplexer type (default: python)
+  --mux=python|rust|none  Choose multiplexer type (default: python)
+                           python: Use Python multiplexer (sshagentmux.py)
+                           rust:   Use Rust multiplexer (ssh-agent-mux)
+                           none:   Skip multiplexer, use remote agent only
   --list                List all configured hosts
   --find HOSTNAME       Find and display information about a specific host
   --add HOSTNAME        Add a new host to the configuration
@@ -1469,6 +1478,7 @@ Examples:
   $SCA_SCRIPT --key=local                    # Start subshell with local key
   $SCA_SCRIPT --key=remote                   # Start subshell with remote key (default)
   $SCA_SCRIPT --key=mux                      # Start subshell with multiplexed agent
+  $SCA_SCRIPT --mux=none                     # Use remote agent only (no multiplexer)
   eval \`$SCA_SCRIPT -e --key=local\`         # Set SSH_AUTH_SOCK in current shell
   $SCA_SCRIPT --list                          # List all configured hosts
   $SCA_SCRIPT --find myserver                 # Find host 'myserver'
@@ -1477,6 +1487,7 @@ Examples:
   $SCA_SCRIPT --key=local --ssh user@host     # Connect using local agent
   $SCA_SCRIPT --key=remote -- -p9922 root@192.168.178.100 ls  # Connect with SSH options and run 'ls' command
   $SCA_SCRIPT --key=mux --ssh -p9922 host    # Connect using multiplexed agent with custom port
+  $SCA_SCRIPT --mux=none --ssh host          # Connect using remote agent only (no local keys)
   $SCA_SCRIPT --wait                          # Run in background monitoring mode
   $SCA_SCRIPT --kill                          # Clean up all agents and connections"
 
