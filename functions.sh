@@ -548,7 +548,8 @@ build_ssh_cmd() {
     local cmd="ssh -a -F $PLAYBOOK_DIR/$SSH_CONFIG_FILE"
     # If we have a temporary agent, use it instead of -i to avoid multiple passphrase prompts
     if [ -n "$TEMP_AGENT_SOCK" ]; then
-        cmd="$cmd -o IdentityAgent \"$TEMP_AGENT_SOCK\""
+        # Use equals format to avoid quote issues when eval'd
+        cmd="$cmd -o IdentityAgent=$TEMP_AGENT_SOCK"
     elif [ "$USE_IDENTITY_FILE" == "true" ] && [ -n "$IDENTITY_FILE" ]; then
         cmd="$cmd -i \"$IDENTITY_FILE\""
     fi
