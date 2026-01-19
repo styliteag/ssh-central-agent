@@ -747,7 +747,13 @@ execute_command_or_shell() {
       log_debug "Command will be executed with: eval"
     fi
     eval "$ssh_cmd"
-    exit $?
+    local ssh_exit_code=$?
+    # Clean up temporary agent after SSH connection if we used it
+    if [ -n "$TEMP_AGENT_PID" ] && ([ "$MUX_TYPE" = "none" ] || ([ "$USE_IDENTITY_FILE" == "true" ] && [ "$LOCAL_SOCK" == "false" ])); then
+      log_info "Cleaning up temporary SSH agent after SSH connection"
+      cleanup_temp_agent
+    fi
+    exit $ssh_exit_code
     
   elif [ -n "$CMD" ]; then
     log_info "STARTING: $CMD"
@@ -890,18 +896,30 @@ setup_new_connection() {
 
   log_success "Successfully started a remote agent at $SCA_SSH_AUTH_SOCK"
   
-  # Clean up temporary agent if we used one (no longer needed after remote agent is established)
+  # Don't clean up temporary agent if we're using --mux=none with local key
+  # The temporary agent has the local key needed for ProxyCommand authentication
   if [ -n "$TEMP_AGENT_PID" ]; then
-    log_info "Cleaning up temporary SSH agent (remote agent is now available)"
-    if [ "${DEBUG:-0}" == "1" ]; then
-      log_debug "Temporary agent cleanup:"
-      log_debug "  PID: $TEMP_AGENT_PID"
-      log_debug "  Socket: $TEMP_AGENT_SOCK"
-      log_debug "  Remote agent socket: $SCA_SSH_AUTH_SOCK"
+    if [ "$MUX_TYPE" = "none" ] || ([ "$USE_IDENTITY_FILE" == "true" ] && [ "$LOCAL_SOCK" == "false" ]); then
+      log_info "Keeping temporary SSH agent (needed for ProxyCommand with --mux=none)"
+      if [ "${DEBUG:-0}" == "1" ]; then
+        log_debug "Temporary agent will be used via mux socket symlink:"
+        log_debug "  PID: $TEMP_AGENT_PID"
+        log_debug "  Socket: $TEMP_AGENT_SOCK"
+        log_debug "  Will be symlinked to: $MUX_SSH_AUTH_SOCK"
+      fi
+      # Don't reset LOCAL_SOCK - we still have the temporary agent
+    else
+      log_info "Cleaning up temporary SSH agent (remote agent is now available)"
+      if [ "${DEBUG:-0}" == "1" ]; then
+        log_debug "Temporary agent cleanup:"
+        log_debug "  PID: $TEMP_AGENT_PID"
+        log_debug "  Socket: $TEMP_AGENT_SOCK"
+        log_debug "  Remote agent socket: $SCA_SSH_AUTH_SOCK"
+      fi
+      cleanup_temp_agent
+      # Reset LOCAL_SOCK since we no longer have the temporary agent
+      LOCAL_SOCK=false
     fi
-    cleanup_temp_agent
-    # Reset LOCAL_SOCK since we no longer have the temporary agent
-    LOCAL_SOCK=false
   fi
   
   # Setup Agent Multiplexer (only if we have a local agent and mux is not disabled)
@@ -949,21 +967,37 @@ setup_new_connection() {
     SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK ssh-add -l >&2
   else
     # No multiplexer - use remote agent directly (identity file only mode or --mux=none)
-    # Create symlink from mux socket to remote agent so SSH config's IdentityAgent works
-    log_info "No multiplexer, creating symlink from mux socket to remote agent"
-    if [ "${DEBUG:-0}" == "1" ]; then
-      log_debug "Socket setup details:"
-      log_debug "  Remote agent socket: $SCA_SSH_AUTH_SOCK"
-      log_debug "  Mux socket path: $MUX_SSH_AUTH_SOCK"
-      if [ -S "$SCA_SSH_AUTH_SOCK" ]; then
-        log_debug "  Remote agent keys:"
-        SSH_AUTH_SOCK="$SCA_SSH_AUTH_SOCK" ssh-add -l 2>&1 | while IFS= read -r line; do
+    # If we have a temporary agent (local key), symlink to it (needed for ProxyCommand)
+    # Otherwise, symlink to remote agent
+    if [ -n "$TEMP_AGENT_SOCK" ] && [ -S "$TEMP_AGENT_SOCK" ]; then
+      log_info "No multiplexer, creating symlink from mux socket to temporary agent (has local key for ProxyCommand)"
+      if [ "${DEBUG:-0}" == "1" ]; then
+        log_debug "Socket setup details:"
+        log_debug "  Temporary agent socket: $TEMP_AGENT_SOCK"
+        log_debug "  Mux socket path: $MUX_SSH_AUTH_SOCK"
+        log_debug "  Temporary agent keys:"
+        SSH_AUTH_SOCK="$TEMP_AGENT_SOCK" ssh-add -l 2>&1 | while IFS= read -r line; do
           log_debug "    $line"
         done
       fi
+      rm -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || true
+      ln -sf "$TEMP_AGENT_SOCK" "$MUX_SSH_AUTH_SOCK"
+    else
+      log_info "No multiplexer, creating symlink from mux socket to remote agent"
+      if [ "${DEBUG:-0}" == "1" ]; then
+        log_debug "Socket setup details:"
+        log_debug "  Remote agent socket: $SCA_SSH_AUTH_SOCK"
+        log_debug "  Mux socket path: $MUX_SSH_AUTH_SOCK"
+        if [ -S "$SCA_SSH_AUTH_SOCK" ]; then
+          log_debug "  Remote agent keys:"
+          SSH_AUTH_SOCK="$SCA_SSH_AUTH_SOCK" ssh-add -l 2>&1 | while IFS= read -r line; do
+            log_debug "    $line"
+          done
+        fi
+      fi
+      rm -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || true
+      ln -sf "$SCA_SSH_AUTH_SOCK" "$MUX_SSH_AUTH_SOCK"
     fi
-    rm -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || true
-    ln -sf "$SCA_SSH_AUTH_SOCK" "$MUX_SSH_AUTH_SOCK"
     if [ "${DEBUG:-0}" == "1" ]; then
       log_debug "  Created symlink: $MUX_SSH_AUTH_SOCK -> $(readlink -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || readlink "$MUX_SSH_AUTH_SOCK")"
       log_debug "  Verifying symlink works:"
@@ -976,7 +1010,7 @@ setup_new_connection() {
     export SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK
     export MUX_SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK
     log_info "Verifying with: 'SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK ssh-add -l'"
-    log_success "Using remote agent via mux socket symlink (no local agent to multiplex)"
+    log_success "Using agent via mux socket symlink (no local agent to multiplex)"
     SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK ssh-add -l >&2
   fi
 }
@@ -1098,10 +1132,23 @@ use_existing_connection() {
     exit 1
   fi
   
-  # Clean up temporary agent if we used one (shouldn't normally happen with existing connections)
+  # Don't clean up temporary agent if we're using --mux=none with local key
+  # The temporary agent has the local key needed for ProxyCommand authentication
   if [ -n "$TEMP_AGENT_PID" ]; then
-    log_info "Cleaning up temporary SSH agent (existing connection found)"
-    cleanup_temp_agent
+    if [ "$MUX_TYPE" = "none" ] || ([ "$USE_IDENTITY_FILE" == "true" ] && [ "$LOCAL_SOCK" == "false" ]); then
+      log_info "Keeping temporary SSH agent (needed for ProxyCommand with --mux=none)"
+      if [ "${DEBUG:-0}" == "1" ]; then
+        log_debug "Temporary agent will be used via mux socket symlink"
+        log_debug "  Temporary agent socket: $TEMP_AGENT_SOCK"
+        log_debug "  Temporary agent keys:"
+        SSH_AUTH_SOCK="$TEMP_AGENT_SOCK" ssh-add -l 2>&1 | while IFS= read -r line; do
+          log_debug "    $line"
+        done
+      fi
+    else
+      log_info "Cleaning up temporary SSH agent (existing connection found)"
+      cleanup_temp_agent
+    fi
   fi
   
   if [ -n "$LEVEL" ]; then
@@ -1118,20 +1165,37 @@ use_existing_connection() {
     export SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK
   elif [ -S "$SCA_SSH_AUTH_SOCK" ] && check_agent_socket "$SCA_SSH_AUTH_SOCK"; then
     log_info "Using working remote SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK"
-    # If --mux=none or we should skip multiplexer, create symlink from mux socket to remote agent
+    # If --mux=none or we should skip multiplexer, create symlink from mux socket
     if [ "$MUX_TYPE" = "none" ] || ([ "$USE_IDENTITY_FILE" == "true" ] && [ "$LOCAL_SOCK" == "false" ]); then
-      log_info "Creating symlink from mux socket to remote agent"
-      if [ "${DEBUG:-0}" == "1" ]; then
-        log_debug "Socket setup details:"
-        log_debug "  Remote agent socket: $SCA_SSH_AUTH_SOCK"
-        log_debug "  Mux socket path: $MUX_SSH_AUTH_SOCK"
-        log_debug "  Remote agent keys:"
-        SSH_AUTH_SOCK="$SCA_SSH_AUTH_SOCK" ssh-add -l 2>&1 | while IFS= read -r line; do
-          log_debug "    $line"
-        done
+      # If we have a temporary agent (local key), symlink to it (needed for ProxyCommand)
+      # Otherwise, symlink to remote agent
+      if [ -n "$TEMP_AGENT_SOCK" ] && [ -S "$TEMP_AGENT_SOCK" ]; then
+        log_info "Creating symlink from mux socket to temporary agent (has local key for ProxyCommand)"
+        if [ "${DEBUG:-0}" == "1" ]; then
+          log_debug "Socket setup details:"
+          log_debug "  Temporary agent socket: $TEMP_AGENT_SOCK"
+          log_debug "  Mux socket path: $MUX_SSH_AUTH_SOCK"
+          log_debug "  Temporary agent keys:"
+          SSH_AUTH_SOCK="$TEMP_AGENT_SOCK" ssh-add -l 2>&1 | while IFS= read -r line; do
+            log_debug "    $line"
+          done
+        fi
+        rm -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || true
+        ln -sf "$TEMP_AGENT_SOCK" "$MUX_SSH_AUTH_SOCK"
+      else
+        log_info "Creating symlink from mux socket to remote agent"
+        if [ "${DEBUG:-0}" == "1" ]; then
+          log_debug "Socket setup details:"
+          log_debug "  Remote agent socket: $SCA_SSH_AUTH_SOCK"
+          log_debug "  Mux socket path: $MUX_SSH_AUTH_SOCK"
+          log_debug "  Remote agent keys:"
+          SSH_AUTH_SOCK="$SCA_SSH_AUTH_SOCK" ssh-add -l 2>&1 | while IFS= read -r line; do
+            log_debug "    $line"
+          done
+        fi
+        rm -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || true
+        ln -sf "$SCA_SSH_AUTH_SOCK" "$MUX_SSH_AUTH_SOCK"
       fi
-      rm -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || true
-      ln -sf "$SCA_SSH_AUTH_SOCK" "$MUX_SSH_AUTH_SOCK"
       if [ "${DEBUG:-0}" == "1" ]; then
         log_debug "  Created symlink: $MUX_SSH_AUTH_SOCK -> $(readlink -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || readlink "$MUX_SSH_AUTH_SOCK")"
         log_debug "  Verifying symlink works:"
