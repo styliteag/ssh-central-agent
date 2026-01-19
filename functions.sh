@@ -1362,6 +1362,12 @@ use_existing_connection() {
     log_error "No working agent socket found"
     exit 1
   fi
+  
+  # Show available keys (similar to setup_new_connection)
+  log_info "Verifying with: 'SSH_AUTH_SOCK=$SSH_AUTH_SOCK ssh-add -l'"
+  SSH_AUTH_SOCK=$SSH_AUTH_SOCK ssh-add -l 2>&1 | while IFS= read -r line; do
+    log_info "$line"
+  done
 }
 
 # Setup Rust multiplexer (ssh-agent-mux)
