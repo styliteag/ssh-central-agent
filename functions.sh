@@ -1024,7 +1024,9 @@ setup_new_connection() {
     
     log_info "Verifying with: 'SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK ssh-add -l'"
     log_success "You can now use this key (even not in this SUBSHELL, thanks to .ssh/config magic)"
-    SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK ssh-add -l >&2
+    SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK ssh-add -l 2>&1 | while IFS= read -r line; do
+      log_info "$line"
+    done
   else
     # No multiplexer - use remote agent directly (identity file only mode or --mux=none)
     # If we have a temporary agent (local key), symlink to it (needed for ProxyCommand)
@@ -1071,7 +1073,9 @@ setup_new_connection() {
     export MUX_SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK
     log_info "Verifying with: 'SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK ssh-add -l'"
     log_success "Using agent via mux socket symlink (no local agent to multiplex)"
-    SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK ssh-add -l >&2
+    SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK ssh-add -l 2>&1 | while IFS= read -r line; do
+      log_info "$line"
+    done
   fi
 }
 
