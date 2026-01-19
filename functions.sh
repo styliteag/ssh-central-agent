@@ -745,22 +745,20 @@ execute_command_or_shell() {
     if [ "${DEBUG:-0}" == "1" ]; then
       ssh_cmd="$ssh_cmd -v"
     fi
-    # If we have a ProxyCommand and are using a temporary agent, we need to ensure
-    # the ProxyCommand's inner ssh -W uses the correct agent
-    # We do this by explicitly setting IdentityAgent in the SSH command
-    # This overrides the SSH config's IdentityAgent for both the main connection
-    # and any ProxyCommand inner connections
+    # If we have a ProxyCommand, the inner ssh -W connects to sca-jump
+    # That connection should use the remote agent (YubiKey), not the temporary agent
+    # We explicitly set IdentityAgent to the remote agent to override the SSH config
     local target_host
     target_host=$(echo "$SSH_ARGS" | awk '{print $1}' | sed 's/.*@//' | sed 's/:.*//')
     if [ -n "$target_host" ]; then
       local has_proxycommand
       has_proxycommand=$(ssh -F "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" -G "$target_host" 2>/dev/null | grep "^proxycommand " || true)
-      if [ -n "$has_proxycommand" ] && [ -n "$TEMP_AGENT_SOCK" ] && [ -S "$TEMP_AGENT_SOCK" ]; then
-        # ProxyCommand detected and we have temporary agent - explicitly set IdentityAgent
-        # This ensures the ProxyCommand's inner ssh -W uses the temporary agent
-        ssh_cmd="$ssh_cmd -o IdentityAgent=$SSH_SOCKET"
+      if [ -n "$has_proxycommand" ] && [ -S "$SCA_SSH_AUTH_SOCK" ]; then
+        # ProxyCommand detected - explicitly set IdentityAgent to remote agent
+        # This ensures the ProxyCommand's inner ssh -W (connecting to sca-jump) uses the remote agent
+        ssh_cmd="$ssh_cmd -o IdentityAgent=$SCA_SSH_AUTH_SOCK"
         if [ "${DEBUG:-0}" == "1" ]; then
-          log_debug "ProxyCommand detected, explicitly setting IdentityAgent=$SSH_SOCKET for inner ssh -W"
+          log_debug "ProxyCommand detected, explicitly setting IdentityAgent=$SCA_SSH_AUTH_SOCK (remote agent) for inner ssh -W to sca-jump"
         fi
       fi
     fi
