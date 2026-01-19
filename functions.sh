@@ -740,7 +740,12 @@ execute_command_or_shell() {
     fi
     log_info "Connecting via SSH config (IdentityAgent will use $SSH_SOCKET): ssh $SSH_ARGS"
     # SSH config already has IdentityAgent set to mux socket, so just run ssh normally
-    local ssh_cmd="ssh -F $PLAYBOOK_DIR/$SSH_CONFIG_FILE $SSH_ARGS"
+    local ssh_cmd="ssh -F $PLAYBOOK_DIR/$SSH_CONFIG_FILE"
+    # Add verbose flag in debug mode
+    if [ "${DEBUG:-0}" == "1" ]; then
+      ssh_cmd="$ssh_cmd -v"
+    fi
+    ssh_cmd="$ssh_cmd $SSH_ARGS"
     if [ "${DEBUG:-0}" == "1" ]; then
       log_debug "Executing SSH command: $ssh_cmd"
       log_debug "SSH_AUTH_SOCK environment variable: ${SSH_AUTH_SOCK:-not set}"
@@ -1190,7 +1195,21 @@ use_existing_connection() {
   fi
 
   # Determine which socket to use
-  if [ -S "$MUX_SSH_AUTH_SOCK" ] && check_agent_socket "$MUX_SSH_AUTH_SOCK"; then
+  # If we have a temporary agent and --mux=none, we need to recreate the symlink to point to temporary agent
+  if [ -n "$TEMP_AGENT_SOCK" ] && [ -S "$TEMP_AGENT_SOCK" ] && ([ "$MUX_TYPE" = "none" ] || ([ "$USE_IDENTITY_FILE" == "true" ] && [ "$LOCAL_SOCK" == "false" ])); then
+    log_info "Recreating mux socket symlink to temporary agent (has local key for ProxyCommand)"
+    rm -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || true
+    ln -sf "$TEMP_AGENT_SOCK" "$MUX_SSH_AUTH_SOCK"
+    if [ "${DEBUG:-0}" == "1" ]; then
+      log_debug "  Created symlink: $MUX_SSH_AUTH_SOCK -> $(readlink -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || readlink "$MUX_SSH_AUTH_SOCK")"
+      log_debug "  Temporary agent keys:"
+      SSH_AUTH_SOCK="$MUX_SSH_AUTH_SOCK" ssh-add -l 2>&1 | while IFS= read -r line; do
+        log_debug "    $line"
+      done
+    fi
+    export SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK
+    export MUX_SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK
+  elif [ -S "$MUX_SSH_AUTH_SOCK" ] && check_agent_socket "$MUX_SSH_AUTH_SOCK"; then
     log_info "Using working multiplexed SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK"
     export SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK
   elif [ -S "$SCA_SSH_AUTH_SOCK" ] && check_agent_socket "$SCA_SSH_AUTH_SOCK"; then
