@@ -27,9 +27,9 @@ def kill_if_exists(pid: int, name: str) -> None:
     try:
         # Use os.kill (standard library)
         os.kill(pid, signal.SIGTERM)
-        log_info(f"Killing {name} (PID {pid})")
+        log_info(f"Sent SIGTERM to {name} (PID {pid})")
     except ProcessLookupError:
-        pass
+        log_debug(f"Process {name} (PID {pid}) already terminated")
     except PermissionError:
         log_debug(f"Permission denied when trying to kill PID {pid}")
     except Exception as e:
@@ -93,8 +93,9 @@ def kill_process_by_name(process_name: str) -> None:
 
 def kill_all_sca_processes() -> None:
     """Kill all SCA-related processes."""
+    log_info("Killing all SCA-related processes")
     kill_processes(PROC_SSH_RAGENT, "SSH agent forwarder")
-    kill_processes(PROC_PYTHON_MUX, "Python multiplexer")
+    kill_processes(PROC_PYTHON_MUX, "SSH agent multiplexer")
 
 
 def check_ssh_agent_running() -> bool:

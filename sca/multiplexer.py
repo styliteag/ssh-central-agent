@@ -8,7 +8,7 @@ from typing import Dict
 
 from . import agentmux
 from .logging_utils import (
-    log_info, log_warn, log_debug
+    log_info, log_warn, log_debug, log_success
 )
 from .socket_utils import wait_for_socket
 
@@ -105,7 +105,7 @@ def setup_python_multiplexer(
     os.environ["OMUX_SSH_AUTH_SOCK"] = omux_socket
     os.environ["OMUX_SSH_AGENT_PID"] = str(omux_pid or "")
     
-    log_info(f"Python multiplexer started (PID: {omux_pid})")
+    log_success(f"Started SSH agent multiplexer as PID {omux_pid}")
     
     return {
         "socket": omux_socket,

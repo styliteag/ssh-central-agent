@@ -42,23 +42,31 @@ mux_pid: Optional[int] = None
 tail_log_pid: Optional[int] = None
 temp_agent_pid: Optional[int] = None
 temp_agent_sock: Optional[str] = None
+# Track which processes were started by this instance (for cleanup)
+_started_ssh_pid: Optional[int] = None
+_started_mux_pid: Optional[int] = None
 
 
 def cleanup_handler(signum=None, frame=None):
     """Handle cleanup on exit."""
-    global sca_exiting, ssh_pid, mux_pid, tail_log_pid, temp_agent_pid
+    global sca_exiting, tail_log_pid, temp_agent_pid, _started_ssh_pid, _started_mux_pid
     sca_exiting = True
     
     if temp_agent_pid:
+        log_info(f"Cleaning up temporary SSH agent (PID {temp_agent_pid})")
         cleanup_temp_agent(temp_agent_pid, temp_agent_sock or "")
     
-    if ssh_pid:
-        kill_if_exists(ssh_pid, "SSH")
+    # Only kill processes we started (not ones from other instances)
+    if _started_ssh_pid:
+        log_info(f"Killing SSH agent forwarder (TCP port forwarding) (PID {_started_ssh_pid})")
+        kill_if_exists(_started_ssh_pid, "SSH agent forwarder")
     
-    if mux_pid:
-        kill_if_exists(mux_pid, "MUX")
+    if _started_mux_pid:
+        log_info(f"Killing SSH agent multiplexer (PID {_started_mux_pid})")
+        kill_if_exists(_started_mux_pid, "SSH agent multiplexer")
     
     if tail_log_pid:
+        log_info(f"Killing log tail process (PID {tail_log_pid})")
         kill_if_exists(tail_log_pid, "log tail")
 
 
@@ -286,7 +294,7 @@ def setup_new_connection(
     level: Optional[int]
 ) -> Dict[str, Any]:
     """Setup a new connection."""
-    global ssh_pid, mux_pid, temp_agent_sock, temp_agent_pid
+    global ssh_pid, mux_pid, temp_agent_sock, temp_agent_pid, _started_ssh_pid, _started_mux_pid
     
     # Use parameter values, update globals
     temp_agent_sock = temp_agent_sock_param
@@ -341,6 +349,7 @@ def setup_new_connection(
             identity_file=identity_file,
             max_level=MAX_LEVEL
         )
+        _started_ssh_pid = ssh_pid  # Track that we started this process
     except Exception as e:
         log_error(f"Failed to start remote agent: {e}")
         sys.exit(1)
@@ -391,6 +400,7 @@ def setup_new_connection(
             sys.exit(1)
         
         mux_pid = omux_pid
+        _started_mux_pid = omux_pid  # Track that we started this process
         
         # Create symlink if needed
         if not skip_symlink:
@@ -449,6 +459,8 @@ def setup_new_connection(
         "my_level": my_level,
         "ssh_pid": ssh_pid,
         "mux_pid": mux_pid,
+        "started_ssh_pid": _started_ssh_pid,
+        "started_mux_pid": _started_mux_pid,
         "ssh_auth_sock": mux_ssh_auth_sock
     }
 
@@ -464,7 +476,7 @@ def use_existing_connection(
     level: Optional[int]
 ) -> Dict[str, Any]:
     """Use an existing connection."""
-    global temp_agent_pid, temp_agent_sock, ssh_pid, mux_pid
+    global temp_agent_pid, temp_agent_sock, ssh_pid, mux_pid, _started_ssh_pid, _started_mux_pid
     
     # Check if we need a temporary agent
     has_local_agent = False
@@ -532,84 +544,78 @@ def use_existing_connection(
     
     # Expand socket paths before checking
     expanded_sca_sock = str(expand_path(sca_ssh_auth_sock))
+    expanded_mux_sock_check = str(expand_path(mux_ssh_auth_sock))
     
-    if local_agent_sock and verify_socket_working(expanded_sca_sock):
+    # Check if mux socket is already working - if so, reuse it directly
+    if verify_socket_working(expanded_mux_sock_check):
+        log_info("Reusing existing SSH agent multiplexer (no new process started)")
+        needs_mux_setup = False
+    elif local_agent_sock and verify_socket_working(expanded_sca_sock):
+        # Only create new mux if we have both local and remote agents, and mux doesn't exist/work
         needs_mux_setup = True
-        expanded_mux_sock_check = str(expand_path(mux_ssh_auth_sock))
-        if verify_socket_working(expanded_mux_sock_check):
-            # Check if mux already has the keys we need
-            local_key_fingerprint = None
-            try:
-                result = subprocess.run(
-                    ["ssh-add", "-l"],
-                    env={"SSH_AUTH_SOCK": local_agent_sock, **os.environ},
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                if result.returncode == 0 and result.stdout:
-                    parts = result.stdout.splitlines()[0].split()
-                    if len(parts) >= 2:
-                        local_key_fingerprint = parts[1]
-            except Exception:
-                pass
-            
-            if local_key_fingerprint and check_key_in_agent(expanded_mux_sock_check, local_key_fingerprint):
-                needs_mux_setup = False
-                log_info("Mux socket already has local keys, skipping setup")
+    else:
+        needs_mux_setup = False
+    
+    if needs_mux_setup:
+        log_info("Setting up multiplexer for local agent + remote agent")
+        org_sock_for_mux = local_agent_sock
         
-        if needs_mux_setup:
-            log_info("Setting up multiplexer for local agent + remote agent")
-            org_sock_for_mux = local_agent_sock
-            
-            try:
-                mux_result = setup_python_multiplexer(
-                    playbook_dir,
-                    expanded_sca_sock,
-                    org_sock_for_mux,
-                    reverse=reverse
-                )
-                omux_socket = mux_result["socket"]
-                omux_pid = mux_result["pid"]
-                skip_symlink = False
-            except Exception as e:
-                log_error(f"Failed to setup Python multiplexer: {e}")
-                return {"my_level": my_level, "ssh_auth_sock": sca_ssh_auth_sock}
-            
-            mux_pid = omux_pid
-            
-            if not skip_symlink:
-                omux_expanded = expand_path(omux_socket)
-                target_expanded = expand_path(mux_ssh_auth_sock)
-                if omux_expanded != target_expanded:
-                    try:
-                        target_path = Path(target_expanded)
-                        # Check if symlink already exists and points to the right target
-                        if target_path.is_symlink():
-                            current_target = target_path.readlink()
-                            if str(current_target) == omux_socket:
-                                log_debug(f"Symlink already exists and is correct: {target_expanded} -> {omux_socket}")
-                            else:
-                                target_path.unlink()
-                                target_path.symlink_to(omux_socket)
-                                log_debug(f"Updated symlink: {target_expanded} -> {omux_socket}")
-                        elif target_path.exists():
-                            # Regular file exists, remove it
+        try:
+            mux_result = setup_python_multiplexer(
+                playbook_dir,
+                expanded_sca_sock,
+                org_sock_for_mux,
+                reverse=reverse
+            )
+            omux_socket = mux_result["socket"]
+            omux_pid = mux_result["pid"]
+            skip_symlink = False
+        except Exception as e:
+            log_error(f"Failed to setup Python multiplexer: {e}")
+            return {
+                "my_level": my_level,
+                "ssh_pid": None,
+                "mux_pid": None,
+                "started_ssh_pid": None,
+                "started_mux_pid": None,
+                "ssh_auth_sock": sca_ssh_auth_sock
+            }
+        
+        mux_pid = omux_pid
+        _started_mux_pid = omux_pid  # Track that we started this process
+        
+        if not skip_symlink:
+            omux_expanded = expand_path(omux_socket)
+            target_expanded = expand_path(mux_ssh_auth_sock)
+            if omux_expanded != target_expanded:
+                try:
+                    target_path = Path(target_expanded)
+                    # Check if symlink already exists and points to the right target
+                    if target_path.is_symlink():
+                        current_target = target_path.readlink()
+                        if str(current_target) == omux_socket:
+                            log_debug(f"Symlink already exists and is correct: {target_expanded} -> {omux_socket}")
+                        else:
                             target_path.unlink()
                             target_path.symlink_to(omux_socket)
-                            log_debug(f"Replaced file with symlink: {target_expanded} -> {omux_socket}")
-                        else:
-                            # Ensure parent directory exists
-                            target_path.parent.mkdir(parents=True, exist_ok=True)
-                            target_path.symlink_to(omux_socket)
-                            log_debug(f"Created symlink: {target_expanded} -> {omux_socket}")
-                    except OSError as e:
-                        log_debug(f"Could not create symlink: {e}")
-            
-            os.environ["ORG_MUX_SSH_AUTH_SOCK"] = omux_socket
-            # Use expanded path for environment variable
-            expanded_mux_sock = str(expand_path(mux_ssh_auth_sock))
-            os.environ["SSH_AUTH_SOCK"] = expanded_mux_sock
+                            log_debug(f"Updated symlink: {target_expanded} -> {omux_socket}")
+                    elif target_path.exists():
+                        # Regular file exists, remove it
+                        target_path.unlink()
+                        target_path.symlink_to(omux_socket)
+                        log_debug(f"Replaced file with symlink: {target_expanded} -> {omux_socket}")
+                    else:
+                        # Ensure parent directory exists
+                        target_path.parent.mkdir(parents=True, exist_ok=True)
+                        target_path.symlink_to(omux_socket)
+                        log_debug(f"Created symlink: {target_expanded} -> {omux_socket}")
+                except OSError as e:
+                    log_debug(f"Could not create symlink: {e}")
+        
+        os.environ["ORG_MUX_SSH_AUTH_SOCK"] = omux_socket
+        # Use expanded path for environment variable
+        expanded_mux_sock = str(expand_path(mux_ssh_auth_sock))
+        os.environ["SSH_AUTH_SOCK"] = expanded_mux_sock
     
     # Use the multiplexed socket if available, otherwise use remote agent
     # Expand paths before checking
@@ -617,10 +623,10 @@ def use_existing_connection(
     expanded_sca_sock = str(expand_path(sca_ssh_auth_sock))
     
     if verify_socket_working(expanded_mux_sock):
-        log_info(f"Using working multiplexed SSH_AUTH_SOCK={expanded_mux_sock}")
+        log_info(f"Using existing multiplexed SSH agent (SSH_AUTH_SOCK={expanded_mux_sock})")
         final_sock = expanded_mux_sock
     elif verify_socket_working(expanded_sca_sock):
-        log_info(f"Using working remote SSH_AUTH_SOCK={expanded_sca_sock}")
+        log_info(f"Using existing remote SSH agent (SSH_AUTH_SOCK={expanded_sca_sock})")
         final_sock = expanded_sca_sock
         os.environ["MUX_SSH_AUTH_SOCK"] = expanded_sca_sock
     else:
@@ -646,17 +652,20 @@ def use_existing_connection(
     except Exception:
         pass
     
+    # Return None for PIDs since we didn't start them (they're from existing connection)
     return {
         "my_level": my_level,
-        "ssh_pid": ssh_pid,
-        "mux_pid": mux_pid,
+        "ssh_pid": None,  # We didn't start this, it's from existing connection
+        "mux_pid": None if not needs_mux_setup else mux_pid,  # Only set if we created it
+        "started_ssh_pid": None,  # We didn't start SSH agent
+        "started_mux_pid": _started_mux_pid if needs_mux_setup else None,  # Only if we created mux
         "ssh_auth_sock": final_sock
     }
 
 
 def main():
     """Main entry point."""
-    global sca_exiting, ssh_pid, mux_pid, temp_agent_pid, temp_agent_sock
+    global sca_exiting, ssh_pid, mux_pid, temp_agent_pid, temp_agent_sock, _started_ssh_pid, _started_mux_pid
     
     # Set up signal handlers
     signal.signal(signal.SIGINT, cleanup_handler)
@@ -757,6 +766,14 @@ def main():
     ssh_pid = result.get("ssh_pid")
     mux_pid = result.get("mux_pid")
     final_ssh_auth_sock = result["ssh_auth_sock"]
+    
+    # Update ownership tracking from result (only if we started the processes)
+    started_ssh = result.get("started_ssh_pid")
+    started_mux = result.get("started_mux_pid")
+    if started_ssh is not None:
+        _started_ssh_pid = started_ssh
+    if started_mux is not None:
+        _started_mux_pid = started_mux
     
     # Set environment variables
     os.environ["SCA_SSH_AUTH_SOCK"] = sca_ssh_auth_sock

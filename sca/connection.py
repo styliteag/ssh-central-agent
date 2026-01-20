@@ -238,7 +238,7 @@ def start_remote_agent(
             start_new_session=True  # Create new session (fully detached)
         )
         ssh_pid = process.pid
-        log_success(f"SSH agent forwarder is running as PID {ssh_pid}")
+        log_success(f"Started SSH agent forwarder (TCP port forwarding) as PID {ssh_pid}")
     except Exception as e:
         log_error(f"Failed to start SSH agent forwarder: {e}")
         raise RuntimeError(f"Failed to start SSH agent forwarder: {e}")
@@ -294,6 +294,7 @@ def start_remote_agent(
             pass
         
         from .process import kill_if_exists
+        log_info(f"Killing failed SSH agent forwarder (TCP port forwarding) (PID {ssh_pid})")
         kill_if_exists(ssh_pid, "SSH agent forwarder")
     
     raise RuntimeError("Failed to connect to remote agent")
@@ -313,30 +314,37 @@ def check_existing_connections(
     Returns:
         Dictionary with keys: 'sca_sock', 'mux_sock', 'working'
     """
+    from .socket_utils import verify_socket_working
+    
     sca_sock = False
     mux_sock = False
     working = True
     
-    # Check if socket exists and is working, AND if the SSH process is still running
-    if verify_remote_agent_working(sca_ssh_auth_sock):
-        sca_sock = True
+    # Expand paths before checking
+    expanded_sca_sock = str(expand_path(sca_ssh_auth_sock))
+    expanded_mux_sock = str(expand_path(mux_ssh_auth_sock))
     
-    # Only check for mux socket if we're using multiplexer
-    # For now, check if it exists and is working
-    mux_socket_path = Path(mux_ssh_auth_sock)
-    if mux_socket_path.exists():
-        if check_agent_socket(mux_ssh_auth_sock) and check_ssh_agent_running():
-            mux_sock = True
+    # Check mux socket first - if it's working, we can use it directly
+    # The socket being functional is proof enough that the agent is working
+    if verify_socket_working(expanded_mux_sock):
+        mux_sock = True
+        log_info("Found working mux socket, will reuse existing connection")
     
-    # If remote socket is not working or SSH process is dead, we need to restart
-    # If mux socket doesn't exist but remote does, that's OK (might be identity-file-only mode)
-    if not sca_sock:
+    # Check remote socket if mux is not available
+    # For remote socket, we also verify the SSH process is running
+    if not mux_sock:
+        if verify_remote_agent_working(sca_ssh_auth_sock):
+            sca_sock = True
+            log_info("Found working remote agent socket, will reuse existing connection")
+    
+    # Only kill processes if NEITHER socket is working
+    if not sca_sock and not mux_sock:
         log_info("Cleaning up stale connections")
         kill_all_sca_processes()
         log_info("Removing stale socket files")
         # Expand paths before checking/removing
-        sca_sock_path = Path(expand_path(sca_ssh_auth_sock))
-        mux_sock_path = Path(expand_path(mux_ssh_auth_sock))
+        sca_sock_path = Path(expanded_sca_sock)
+        mux_sock_path = Path(expanded_mux_sock)
         
         try:
             if sca_sock_path.exists():
@@ -351,17 +359,20 @@ def check_existing_connections(
         except OSError as e:
             log_debug(f"Error removing socket {mux_sock_path}: {e}")
         working = False
-    elif not mux_sock and mux_socket_path.exists():
-        # Mux socket exists but not working - restart multiplexer
-        log_info("Mux socket exists but not working, restarting multiplexer")
-        from .process import kill_processes, PROC_PYTHON_MUX
-        kill_processes(PROC_PYTHON_MUX, "Python multiplexer")
-        try:
-            if mux_socket_path.exists():
-                mux_socket_path.unlink()
-        except OSError:
-            pass
-        working = False
+    elif not mux_sock and sca_sock:
+        # Remote socket is working but mux is not - check if mux socket exists but is stale
+        mux_socket_path = Path(expanded_mux_sock)
+        if mux_socket_path.exists():
+            # Mux socket exists but not working - clean it up (we'll use remote socket)
+            log_info("Mux socket exists but not working, removing stale mux socket")
+            from .process import kill_processes, PROC_PYTHON_MUX
+            kill_processes(PROC_PYTHON_MUX, "SSH agent multiplexer")
+            try:
+                if mux_socket_path.exists():
+                    mux_socket_path.unlink()
+            except OSError:
+                pass
+            # We can still use the remote socket, so working = True
     
     return {
         "sca_sock": sca_sock,
