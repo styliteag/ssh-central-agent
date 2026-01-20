@@ -1,6 +1,5 @@
 config
 .sca-jump-level
-sca
 scassh
 config_main
 config_single

@@ -1,0 +1,379 @@
+"""
+Connection management: determining security level, starting remote agents, etc.
+"""
+import os
+import re
+import socket
+import subprocess
+import time
+from pathlib import Path
+from typing import Dict, Optional, Tuple, Any
+
+from .agent import (
+    find_identity_file, setup_temp_agent, cleanup_temp_agent,
+    build_ssh_cmd, get_key_fingerprint, check_key_in_agent, get_agent_key_count
+)
+from .socket_utils import verify_socket_working, check_agent_socket, wait_for_socket
+from .process import (
+    verify_remote_agent_working, check_ssh_agent_running,
+    kill_all_sca_processes, process_exists
+)
+from .logging_utils import log_info, log_error, log_success, log_warn, log_debug
+from .platform_utils import get_home_dir
+
+
+# Constants
+SSH_RETRY_MAX = 10
+SSH_RETRY_DELAY = 1
+SSH_INITIAL_DELAY = 0.1
+
+
+def determine_security_level(
+    playbook_dir: str,
+    ssh_config_file: str,
+    mux_ssh_auth_sock: Optional[str] = None,
+    temp_agent_sock: Optional[str] = None,
+    use_identity_file: bool = False,
+    identity_file: Optional[str] = None
+) -> int:
+    """
+    Determine user security level by connecting to sca-key server.
+    
+    Args:
+        playbook_dir: Directory containing SSH config
+        ssh_config_file: Name of SSH config file
+        mux_ssh_auth_sock: Mux socket path (if available)
+        temp_agent_sock: Temporary agent socket (if using temp agent)
+        use_identity_file: Whether to use identity file directly
+        identity_file: Path to identity file
+        
+    Returns:
+        Security level (0-3)
+        
+    Raises:
+        RuntimeError: If security level cannot be determined
+    """
+    # If we have a mux socket with the local key, use it directly
+    # Otherwise, use build_ssh_cmd which will use temp agent or identity file
+    ssh_cmd_list = None
+    
+    if mux_ssh_auth_sock and verify_socket_working(mux_ssh_auth_sock):
+        # Check if mux socket has the local key (needed for sca-key connection)
+        id_file = find_identity_file()
+        if id_file:
+            id_fingerprint = get_key_fingerprint(id_file)
+            if id_fingerprint:
+                if check_key_in_agent(mux_ssh_auth_sock, id_fingerprint):
+                    # Mux socket has the local key, use it
+                    config_path = Path(playbook_dir) / ssh_config_file
+                    ssh_cmd_list = [
+                        "ssh", "-a", "-F", str(config_path),
+                        "-o", f"IdentityAgent={mux_ssh_auth_sock}"
+                    ]
+                    log_debug(f"Determining security level with mux socket: {' '.join(ssh_cmd_list)}")
+    
+    if not ssh_cmd_list:
+        # Use build_ssh_cmd which will use temp agent or identity file
+        ssh_cmd_list = build_ssh_cmd(
+            playbook_dir, ssh_config_file,
+            temp_agent_sock=temp_agent_sock,
+            use_identity_file=use_identity_file,
+            identity_file=identity_file
+        )
+        log_debug(f"Determining security level with: {' '.join(ssh_cmd_list)}")
+    
+    # Execute SSH command to get security level
+    ssh_cmd_list.extend([
+        "-o", "SetEnv SCA_NOLEVEL=1",
+        "sca-key", "groups"
+    ])
+    
+    try:
+        result = subprocess.run(
+            ssh_cmd_list,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        if result.returncode != 0:
+            log_error(f"SSH connection failed with exit code {result.returncode}")
+            log_error(f"SSH output: {result.stderr}")
+            raise RuntimeError(f"SSH connection failed: {result.stderr}")
+        
+        ssh_output = result.stdout + result.stderr
+        
+        # Parse output for level-* groups
+        # Format: level-0, level-1, etc.
+        level_pattern = r'level-(\d+)'
+        matches = re.findall(level_pattern, ssh_output)
+        
+        if not matches:
+            log_error("Could not determine your security level. Check your SSH connection.")
+            if ssh_output:
+                log_error(f"SSH command output: {ssh_output}")
+            raise RuntimeError("Could not determine security level")
+        
+        # Get the highest level
+        levels = [int(m) for m in matches]
+        my_level = max(levels)
+        
+        return my_level
+        
+    except subprocess.TimeoutExpired:
+        log_error("SSH connection timed out")
+        raise RuntimeError("SSH connection timed out")
+    except Exception as e:
+        log_error(f"Error determining security level: {e}")
+        raise
+
+
+def start_remote_agent(
+    level: int,
+    playbook_dir: str,
+    ssh_config_file: str,
+    sca_ssh_auth_sock: str,
+    rusername: str,
+    temp_agent_sock: Optional[str] = None,
+    use_identity_file: bool = False,
+    identity_file: Optional[str] = None,
+    max_level: int = 99
+) -> int:
+    """
+    Start remote SSH agent forwarder.
+    
+    Args:
+        level: Security level
+        playbook_dir: Directory containing SSH config
+        ssh_config_file: Name of SSH config file
+        sca_ssh_auth_sock: Path where remote agent socket will be created
+        rusername: Remote username
+        temp_agent_sock: Temporary agent socket (if using temp agent)
+        use_identity_file: Whether to use identity file directly
+        identity_file: Path to identity file
+        max_level: Maximum security level
+        
+    Returns:
+        Process ID of SSH forwarder
+        
+    Raises:
+        RuntimeError: If agent cannot be started
+    """
+    ssh_cmd_list = build_ssh_cmd(
+        playbook_dir, ssh_config_file,
+        temp_agent_sock=temp_agent_sock,
+        use_identity_file=use_identity_file,
+        identity_file=identity_file
+    )
+    
+    log_info(f"Starting SSH agent forwarder (level {level})...")
+    
+    # Build the SSH command with port forwarding
+    remote_socket = f"/home/{rusername}/yubikey-agent.sock"
+    ssh_cmd_list.extend([
+        "-tt", "-a",
+        "-L", f"{sca_ssh_auth_sock}:{remote_socket}",
+        "-o", f"SetEnv SCA_LEVEL={level}",
+        "sca-key", "ragent",
+        f"{os.environ.get('LOGNAME', '')},{os.environ.get('USER', '')},{rusername},{level},{max_level},{socket.gethostname()},{get_home_dir()}"
+    ])
+    
+    # Set environment variables
+    env = os.environ.copy()
+    env["SCA_LOCALUSER"] = os.environ.get("LOGNAME", "")
+    env["SCA_REMOTEUSER"] = rusername
+    env["SCA_IP"] = socket.gethostname()
+    
+    # Start SSH process in background
+    try:
+        process = subprocess.Popen(
+            ssh_cmd_list,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=env,
+            start_new_session=True  # Detach from parent
+        )
+        ssh_pid = process.pid
+        log_success(f"SSH agent forwarder is running as PID {ssh_pid}")
+    except Exception as e:
+        log_error(f"Failed to start SSH agent forwarder: {e}")
+        raise RuntimeError(f"Failed to start SSH agent forwarder: {e}")
+    
+    # Wait for connection to establish
+    time.sleep(SSH_INITIAL_DELAY)
+    
+    iterations = 0
+    while iterations < SSH_RETRY_MAX:
+        iterations += 1
+        
+        # Check if SSH process is still running
+        if not process_exists(ssh_pid):
+            log_error(f"SSH process (PID {ssh_pid}) died unexpectedly")
+            raise RuntimeError("SSH process died unexpectedly")
+        
+        # Check if socket exists and is working
+        if verify_socket_working(sca_ssh_auth_sock):
+            return ssh_pid
+        
+        log_info(f"Trying to connect to agent ({iterations}/{SSH_RETRY_MAX})")
+        time.sleep(SSH_RETRY_DELAY)
+    
+    log_error(f"Cannot connect to agent after {SSH_RETRY_MAX} attempts")
+    
+    # Check if SSH process is still running
+    if process_exists(ssh_pid):
+        log_error(f"SSH process (PID {ssh_pid}) is still running but socket is not working")
+        from .process import kill_if_exists
+        kill_if_exists(ssh_pid, "SSH agent forwarder")
+    
+    raise RuntimeError("Failed to connect to remote agent")
+
+
+def check_existing_connections(
+    sca_ssh_auth_sock: str,
+    mux_ssh_auth_sock: str
+) -> Dict[str, bool]:
+    """
+    Check existing connections and clean up stale ones.
+    
+    Args:
+        sca_ssh_auth_sock: Path to remote agent socket
+        mux_ssh_auth_sock: Path to mux socket
+        
+    Returns:
+        Dictionary with keys: 'sca_sock', 'mux_sock', 'working'
+    """
+    sca_sock = False
+    mux_sock = False
+    working = True
+    
+    # Check if socket exists and is working, AND if the SSH process is still running
+    if verify_remote_agent_working(sca_ssh_auth_sock):
+        sca_sock = True
+    
+    # Only check for mux socket if we're using multiplexer
+    # For now, check if it exists and is working
+    mux_socket_path = Path(mux_ssh_auth_sock)
+    if mux_socket_path.exists():
+        if check_agent_socket(mux_ssh_auth_sock) and check_ssh_agent_running():
+            mux_sock = True
+    
+    # If remote socket is not working or SSH process is dead, we need to restart
+    # If mux socket doesn't exist but remote does, that's OK (might be identity-file-only mode)
+    if not sca_sock:
+        log_info("Cleaning up stale connections")
+        kill_all_sca_processes()
+        log_info("Removing stale socket files")
+        try:
+            if Path(sca_ssh_auth_sock).exists():
+                Path(sca_ssh_auth_sock).unlink()
+        except OSError:
+            pass
+        try:
+            if Path(mux_ssh_auth_sock).exists():
+                Path(mux_ssh_auth_sock).unlink()
+        except OSError:
+            pass
+        working = False
+    elif not mux_sock and mux_socket_path.exists():
+        # Mux socket exists but not working - restart multiplexer
+        log_info("Mux socket exists but not working, restarting multiplexer")
+        from .process import kill_processes, PROC_PYTHON_MUX
+        kill_processes(PROC_PYTHON_MUX, "Python multiplexer")
+        try:
+            if mux_socket_path.exists():
+                mux_socket_path.unlink()
+        except OSError:
+            pass
+        working = False
+    
+    return {
+        "sca_sock": sca_sock,
+        "mux_sock": mux_sock,
+        "working": working
+    }
+
+
+def validate_local_agent(
+    ssh_auth_sock: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Validate local SSH agent or identity file.
+    
+    Args:
+        ssh_auth_sock: Current SSH_AUTH_SOCK value
+        
+    Returns:
+        Dictionary with keys: 'local_sock', 'use_identity_file', 'identity_file', 
+                              'temp_agent_sock', 'temp_agent_pid'
+        
+    Raises:
+        RuntimeError: If no agent or identity file found
+    """
+    local_sock = False
+    use_identity_file = False
+    identity_file = None
+    temp_agent_sock = None
+    temp_agent_pid = None
+    
+    # Check if local SSH agent is working
+    if ssh_auth_sock and check_agent_socket(ssh_auth_sock):
+        local_sock = True
+    
+    if not local_sock:
+        # No agent found, check for identity files
+        log_info("No local SSH agent found, checking for identity files...")
+        id_file = find_identity_file()
+        if id_file:
+            use_identity_file = True
+            identity_file = str(id_file)
+            log_success(f"Found identity file: {identity_file}")
+            # Create temporary agent to avoid multiple passphrase prompts
+            try:
+                temp_sock, temp_pid = setup_temp_agent(id_file)
+                temp_agent_sock = temp_sock
+                temp_agent_pid = temp_pid
+                local_sock = True  # We now have a temporary agent
+                log_info("Using temporary SSH agent for initial connections")
+            except Exception as e:
+                log_error("Failed to set up temporary SSH agent")
+                raise RuntimeError(f"Failed to set up temporary SSH agent: {e}")
+        else:
+            log_error("No local SSH agent or identity file found.")
+            log_error('Either start an agent with "eval $(ssh-agent)" and add your keys,')
+            log_error("or ensure you have an identity file at ~/.ssh/id_ed25519, ~/.ssh/id_rsa, etc.")
+            raise RuntimeError("No local SSH agent or identity file found")
+    else:
+        # Agent exists, check if it has keys loaded
+        key_count = get_agent_key_count(ssh_auth_sock)
+        if key_count == 0:
+            log_warn("Your local agent has no keys loaded")
+            log_info("Checking for identity files as fallback...")
+            id_file = find_identity_file()
+            if id_file:
+                use_identity_file = True
+                identity_file = str(id_file)
+                log_success(f"Found identity file: {identity_file} (will use instead of empty agent)")
+                # Create temporary agent to avoid multiple passphrase prompts
+                try:
+                    temp_sock, temp_pid = setup_temp_agent(id_file)
+                    temp_agent_sock = temp_sock
+                    temp_agent_pid = temp_pid
+                    local_sock = True  # We now have a temporary agent
+                    log_info("Using temporary SSH agent for initial connections")
+                except Exception as e:
+                    log_error("Failed to set up temporary SSH agent")
+                    raise RuntimeError(f"Failed to set up temporary SSH agent: {e}")
+            else:
+                log_error("You have no key in your local agent and no identity file found!")
+                raise RuntimeError("No keys in agent and no identity file found")
+        else:
+            log_success(f"You have {key_count} keys in your local agent")
+    
+    return {
+        "local_sock": local_sock,
+        "use_identity_file": use_identity_file,
+        "identity_file": identity_file,
+        "temp_agent_sock": temp_agent_sock,
+        "temp_agent_pid": temp_agent_pid
+    }

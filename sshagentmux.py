@@ -38,6 +38,60 @@ import time
 import base64
 import json
 
+# Windows named pipe support
+if sys.platform == "win32":
+    try:
+        import win32file
+        import win32pipe
+        HAS_WIN32 = True
+    except ImportError:
+        HAS_WIN32 = False
+else:
+    HAS_WIN32 = False
+
+
+class _WindowsNamedPipeSocket:
+    """Wrapper for Windows named pipes to work like a socket."""
+    def __init__(self, handle):
+        self.handle = handle
+        self._closed = False
+    
+    def sendall(self, data):
+        """Send all data through the named pipe."""
+        if self._closed:
+            raise socket.error("Pipe is closed")
+        try:
+            win32file.WriteFile(self.handle, data)
+        except Exception as e:
+            raise socket.error(f"Write error: {e}")
+    
+    def recv(self, bufsize):
+        """Receive data from the named pipe."""
+        if self._closed:
+            raise socket.error("Pipe is closed")
+        try:
+            result, data = win32file.ReadFile(self.handle, bufsize)
+            return data
+        except Exception as e:
+            if "EOF" in str(e) or "broken pipe" in str(e).lower():
+                return b""
+            raise socket.error(f"Read error: {e}")
+    
+    def close(self):
+        """Close the named pipe."""
+        if not self._closed:
+            try:
+                win32file.CloseHandle(self.handle)
+            except Exception:
+                pass
+            self._closed = True
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, *args):
+        self.close()
+
 LOG = logging.getLogger(__name__)
 mypid = 0
 
@@ -116,8 +170,49 @@ class UpstreamSocketThread(threading.Thread):
         if self._sock is not None:
             self._sock.close()
 
-        self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self._sock.connect(self._socket_path)
+        # Check if this is a Windows named pipe
+        if sys.platform == "win32" and (
+            self._socket_path.startswith("\\\\.\\pipe\\") or
+            self._socket_path.startswith("\\\\")
+        ):
+            # Windows named pipe
+            if HAS_WIN32:
+                # Use win32pipe for native Windows named pipe support
+                try:
+                    # Convert \\.\pipe\name to proper format
+                    pipe_name = self._socket_path
+                    if pipe_name.startswith("\\\\.\\pipe\\"):
+                        pipe_name = pipe_name[9:]  # Remove \\.\pipe\
+                    
+                    # Open named pipe
+                    handle = win32file.CreateFile(
+                        f"\\\\.\\pipe\\{pipe_name}",
+                        win32file.GENERIC_READ | win32file.GENERIC_WRITE,
+                        0,
+                        None,
+                        win32file.OPEN_EXISTING,
+                        0,
+                        None
+                    )
+                    # Wrap in a file-like object that works with socket interface
+                    # For now, we'll use a workaround with a custom socket wrapper
+                    # Note: This is a simplified implementation
+                    self._sock = _WindowsNamedPipeSocket(handle)
+                except Exception as e:
+                    LOG.error("Failed to connect to Windows named pipe %s: %s", self._socket_path, e)
+                    raise
+            else:
+                # Fallback: try to use socket with special Windows handling
+                # Windows OpenSSH named pipes can sometimes be accessed via TCP localhost
+                # This is a workaround - proper support requires pywin32
+                LOG.warning("Windows named pipe support requires pywin32. Install with: pip install pywin32")
+                raise socket.error("Windows named pipe support requires pywin32")
+        else:
+            # Unix socket
+            if not hasattr(socket, 'AF_UNIX'):
+                raise socket.error("Unix sockets not supported on this platform")
+            self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self._sock.connect(self._socket_path)
 
     def _recv_msg(self):
         msg_length = 4
@@ -892,10 +987,36 @@ class AgentMultiplexer(socketserver.ThreadingUnixStreamServer):
 def start_agent_mux(ready_pipeout, parent_pid, upstream_socket,
                     alternative_socket):
     # generate unique socket path
-    sock_dir = tempfile.mkdtemp()
-    sock_path = sock_dir + '/ssh_auth.sock'
+    if sys.platform == "win32":
+        # On Windows, use a named pipe or TCP socket
+        # For now, use a named pipe path format
+        pipe_name = f"ssh_auth_{os.getpid()}"
+        sock_path = f"\\\\.\\pipe\\{pipe_name}"
+        # Note: Full Windows named pipe server support would require
+        # implementing a custom server class. For now, this is a placeholder.
+        # The multiplexer will work for connecting to Windows named pipes,
+        # but creating a listening server on Windows needs additional work.
+        LOG.warning("Windows named pipe server creation not fully implemented")
+        LOG.warning("Multiplexer can connect to Windows named pipes but cannot create a server")
+        # Fallback: use TCP localhost socket on Windows
+        import socket as sock_module
+        tcp_socket = sock_module.socket(sock_module.AF_INET, sock_module.SOCK_STREAM)
+        tcp_socket.bind(('127.0.0.1', 0))
+        tcp_socket.listen(1)
+        sock_path = f"tcp://127.0.0.1:{tcp_socket.getsockname()[1]}"
+        LOG.info("Using TCP socket on Windows: %s", sock_path)
+    else:
+        sock_dir = tempfile.mkdtemp()
+        sock_path = sock_dir + '/ssh_auth.sock'
 
     # pass all sockets to AgentMultiplexer
+    # Note: On Windows, AgentMultiplexer uses UnixStreamServer which won't work
+    # This needs a Windows-compatible server implementation
+    if sys.platform == "win32":
+        LOG.error("Windows server support not fully implemented")
+        LOG.error("The multiplexer server requires Unix sockets or a Windows named pipe server implementation")
+        raise NotImplementedError("Windows server support requires additional implementation")
+    
     server = AgentMultiplexer(sock_path, upstream_socket, alternative_socket)
 
     # Let parent know the socket is ready
@@ -907,8 +1028,9 @@ def start_agent_mux(ready_pipeout, parent_pid, upstream_socket,
     while check_pid(parent_pid):
         server.handle_request()
 
-    os.unlink(sock_path)
-    os.rmdir(sock_dir)
+    if sys.platform != "win32":
+        os.unlink(sock_path)
+        os.rmdir(sock_dir)
 
 
 def check_pid(pid):
@@ -925,6 +1047,48 @@ def same_socket(sock1, sock2):
 
 
 def socket_working(sock):
+    """
+    Check if a socket (Unix socket or Windows named pipe) is working.
+    """
+    if not sock:
+        return False
+    
+    # Windows named pipe check
+    if sys.platform == "win32" and (sock.startswith("\\\\.\\pipe\\") or sock.startswith("\\\\")):
+        if HAS_WIN32:
+            try:
+                pipe_name = sock
+                if pipe_name.startswith("\\\\.\\pipe\\"):
+                    pipe_name = pipe_name[9:]
+                handle = win32file.CreateFile(
+                    f"\\\\.\\pipe\\{pipe_name}",
+                    win32file.GENERIC_READ | win32file.GENERIC_WRITE,
+                    0,
+                    None,
+                    win32file.OPEN_EXISTING,
+                    0,
+                    None
+                )
+                win32file.CloseHandle(handle)
+                return True
+            except Exception:
+                return False
+        else:
+            # Without pywin32, we can't properly check Windows named pipes
+            # Return True optimistically (caller should handle errors)
+            return True
+    
+    # Unix socket check - use original logic for compatibility
+    try:
+        r = os.path.realpath(sock)
+        p = pathlib.Path(r)
+        if p.is_socket():
+            return True
+        else:
+            LOG.error("%s no Socket", r)
+            return False
+    except Exception:
+        return False
     r = os.path.realpath(sock)
 
     p = pathlib.Path(r)
