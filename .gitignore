@@ -11,3 +11,5 @@ __pycache__/
 .DS_Store
 hosts
 hosts/
+sca.sh
+sca.py
