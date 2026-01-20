@@ -459,6 +459,33 @@ show_harmless_error_note() {
 # Find identity file in common locations
 find_identity_file() {
     local key_file
+    
+    # First, check if my_ssh_key is set in the SSH config (from localvars.yml)
+    # Look for IdentityFile in the sca-key host section
+    if [ -f "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" ]; then
+        local config_key
+        # Extract IdentityFile from sca-key host section (between "Host sca-key" and next "Host" or end of file)
+        config_key=$(awk '/^Host[[:space:]]+sca-key/,/^Host[[:space:]]+|^$/{if(/^[[:space:]]*IdentityFile[[:space:]]+/ && !/^[[:space:]]*#/){print $2; exit}}' "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" 2>/dev/null)
+        if [ -n "$config_key" ]; then
+            # Expand ~ to $HOME
+            config_key=$(echo "$config_key" | sed "s|^~|$HOME|")
+            if [ "$config_key" != "$HOME/.ssh/id_unused" ] && [ -f "$config_key" ] && [ -r "$config_key" ]; then
+                echo "$config_key"
+                return 0
+            fi
+        fi
+    fi
+    
+    # Check for common key name patterns (id_ed25519_*, id_rsa_*, etc.)
+    for key_file in ~/.ssh/id_ed25519_* ~/.ssh/id_rsa_* ~/.ssh/id_ecdsa_*; do
+        # Skip .pub files
+        if [ -f "$key_file" ] && [ -r "$key_file" ] && [[ ! "$key_file" =~ \.pub$ ]]; then
+            echo "$key_file"
+            return 0
+        fi
+    done 2>/dev/null || true
+    
+    # Fall back to standard identity file locations
     for key_file in ~/.ssh/id_ed25519 ~/.ssh/id_rsa ~/.ssh/id_ecdsa ~/.ssh/id_dsa; do
         if [ -f "$key_file" ] && [ -r "$key_file" ]; then
             echo "$key_file"
