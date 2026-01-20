@@ -1558,6 +1558,26 @@ parse_arguments() {
       echo "$help_text" >&2
       exit 1
       ;;
+    -v|--version)
+      echo "SCA - SSH Central Agent (Shell version)" >&2
+      echo "Script: $SCA_SCRIPT" >&2
+      # Expand socket paths (handle ~)
+      local sca_sock="${SCA_SSH_AUTH_SOCK:-~/.ssh/scadev-agent.sock}"
+      local mux_sock="${MUX_SSH_AUTH_SOCK:-~/.ssh/scadev-mux.sock}"
+      local local_sock="${ORG_SSH_AUTH_SOCK:-${SSH_AUTH_SOCK:-}}"
+      # Expand ~ to home directory
+      sca_sock="${sca_sock/#\~/$HOME}"
+      mux_sock="${mux_sock/#\~/$HOME}"
+      if [ -n "$local_sock" ]; then
+        local_sock="${local_sock/#\~/$HOME}"
+      else
+        local_sock="(not set)"
+      fi
+      echo "Remote agent socket: $sca_sock" >&2
+      echo "Multiplexer socket: $mux_sock" >&2
+      echo "Local agent socket: $local_sock" >&2
+      exit 0
+      ;;
     -d|--debug)
       DEBUG=1
       shift
@@ -1650,6 +1670,26 @@ parse_arguments() {
           h)
             echo "$help_text" >&2
             exit 1
+            ;;
+          v)
+            echo "SCA - SSH Central Agent (Shell version)" >&2
+            echo "Script: $SCA_SCRIPT" >&2
+            # Expand socket paths (handle ~)
+            local sca_sock="${SCA_SSH_AUTH_SOCK:-~/.ssh/scadev-agent.sock}"
+            local mux_sock="${MUX_SSH_AUTH_SOCK:-~/.ssh/scadev-mux.sock}"
+            local local_sock="${ORG_SSH_AUTH_SOCK:-${SSH_AUTH_SOCK:-}}"
+            # Expand ~ to home directory
+            sca_sock="${sca_sock/#\~/$HOME}"
+            mux_sock="${mux_sock/#\~/$HOME}"
+            if [ -n "$local_sock" ]; then
+              local_sock="${local_sock/#\~/$HOME}"
+            else
+              local_sock="(not set)"
+            fi
+            echo "Remote agent socket: $sca_sock" >&2
+            echo "Multiplexer socket: $mux_sock" >&2
+            echo "Local agent socket: $local_sock" >&2
+            exit 0
             ;;
           d)
             DEBUG=1
@@ -1776,6 +1816,11 @@ Examples:
   $SCA_SCRIPT --kill                          # Clean up all agents and connections"
 
 # Parse arguments
+# If no arguments provided, show help
+if [ $# -eq 0 ]; then
+  echo "$HELP" >&2
+  exit 1
+fi
 parse_arguments "$HELP" "$@"
 
 # Set up exit trap for cleanup

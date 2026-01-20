@@ -99,36 +99,122 @@ def execute_command_or_shell(
         # SSH Mode: Direct SSH connection
         # Expand paths before checking (needed for fallback logic)
         from .platform_utils import expand_path
+        from pathlib import Path
         expanded_mux_sock = str(expand_path(mux_ssh_auth_sock))
         expanded_ssh_auth_sock = str(expand_path(ssh_auth_sock))
         
         # Select socket based on --key option
         if key == "mux":
             ssh_socket = expanded_mux_sock
+            log_info("Using multiplexed agent (--key=mux)")
         elif key == "local":
-            ssh_socket = org_ssh_auth_sock
+            # Use local agent (expand path to handle ~ and spaces)
+            if not org_ssh_auth_sock:
+                log_error("No local agent available (--key=local requires a local SSH agent)")
+                sys.exit(1)
+            # Get the original local agent socket (before any SCA modifications)
+            # This should be the actual local agent, not the mux
+            local_sock = org_ssh_auth_sock
+            # Check if it's pointing to a SCA socket (which would be wrong)
+            # ssh_auth_sock is the remote agent socket, mux_ssh_auth_sock is the mux socket
+            # Expand paths for comparison to handle ~ and relative paths
+            expanded_remote = str(expand_path(ssh_auth_sock))
+            expanded_mux = str(expand_path(mux_ssh_auth_sock))
+            expanded_local = str(expand_path(local_sock)) if local_sock else ""
+            
+            if expanded_local == expanded_remote or expanded_local == expanded_mux:
+                # Fall back to environment variable if org_ssh_auth_sock was overwritten
+                local_sock = os.environ.get("ORG_SSH_AUTH_SOCK") or os.environ.get("SSH_AUTH_SOCK", "")
+                if local_sock:
+                    expanded_local = str(expand_path(local_sock))
+                    # Make sure it's not a SCA socket
+                    if expanded_local == expanded_remote or expanded_local == expanded_mux:
+                        log_error("Cannot determine local agent socket (it appears to be a SCA socket)")
+                        sys.exit(1)
+            ssh_socket = str(expand_path(local_sock))
+            if not verify_socket_working(ssh_socket):
+                log_error(f"Local agent socket is not working: {ssh_socket}")
+                sys.exit(1)
+            log_info(f"Using local agent (--key=local): {ssh_socket}")
+        elif key == "remote":
+            # Explicitly use remote agent (not the mux, but the actual remote agent socket)
+            # The remote agent socket is typically at ~/.ssh/scadev-agent.sock
+            # Get it from environment variable SCA_SSH_AUTH_SOCK which is set in main()
+            # or fall back to the ssh_auth_sock parameter (which should be the remote socket)
+            remote_sock = os.environ.get("SCA_SSH_AUTH_SOCK")
+            if not remote_sock:
+                # Fall back to parameter (should be remote agent socket, not mux)
+                remote_sock = ssh_auth_sock
+            # Make sure we're not using the mux socket
+            expanded_remote_param = str(expand_path(remote_sock))
+            expanded_mux_check = str(expand_path(mux_ssh_auth_sock))
+            if expanded_remote_param == expanded_mux_check:
+                # The parameter is the mux socket, try to get the actual remote socket
+                remote_sock = str(Path.home() / ".ssh" / "scadev-agent.sock")
+            ssh_socket = str(expand_path(remote_sock))
+            if not verify_socket_working(ssh_socket):
+                log_error(f"Remote agent socket is not working: {ssh_socket}")
+                sys.exit(1)
+            log_info(f"Using remote agent (--key=remote): {ssh_socket}")
         else:
             # Default to mux, but fall back to remote agent if mux doesn't work
             if verify_socket_working(expanded_mux_sock):
                 ssh_socket = expanded_mux_sock
+                log_info("Using multiplexed agent (default)")
             elif verify_socket_working(expanded_ssh_auth_sock):
                 ssh_socket = expanded_ssh_auth_sock
+                log_info(f"Using remote agent (fallback): {ssh_socket}")
             else:
                 ssh_socket = expanded_mux_sock  # Will fail below with better error
         
-        # Resolve symlink if needed
-        resolved_socket = resolve_socket_path(ssh_socket)
+        # Resolve symlink if needed (but skip for local/remote keys since we already verified)
+        if key in ("local", "remote"):
+            # For explicit key selection, use the socket as-is (already verified)
+            resolved_socket = ssh_socket
+        else:
+            resolved_socket = resolve_socket_path(ssh_socket)
+            
+            # Verify socket
+            if not verify_socket_working(resolved_socket):
+                # Try fallback to remote agent if mux failed
+                if ssh_socket == expanded_mux_sock and verify_socket_working(expanded_ssh_auth_sock):
+                    resolved_socket = resolve_socket_path(expanded_ssh_auth_sock)
+                    ssh_socket = expanded_ssh_auth_sock
+                    log_info(f"Multiplexer socket not available, using remote agent: {resolved_socket}")
+                else:
+                    log_error(f"Socket is not working: {resolved_socket}")
+                    sys.exit(1)
         
-        # Verify socket
-        if not verify_socket_working(resolved_socket):
-            # Try fallback to remote agent if mux failed
-            if ssh_socket == expanded_mux_sock and verify_socket_working(expanded_ssh_auth_sock):
-                resolved_socket = resolve_socket_path(expanded_ssh_auth_sock)
-                ssh_socket = expanded_ssh_auth_sock
-                log_info(f"Multiplexer socket not available, using remote agent: {resolved_socket}")
+        # Show available keys in the selected agent
+        # Use absolute path and ensure we override any existing SSH_AUTH_SOCK in environment
+        agent_socket = str(expand_path(resolved_socket))
+        log_info(f"Available keys in selected agent ({key if key else 'default'}) at {agent_socket}:")
+        try:
+            # Create clean environment with only the selected socket (override any existing SSH_AUTH_SOCK)
+            clean_env = {k: v for k, v in os.environ.items() if k != "SSH_AUTH_SOCK"}
+            clean_env["SSH_AUTH_SOCK"] = agent_socket
+            result = subprocess.run(
+                ["ssh-add", "-l"],
+                env=clean_env,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                # Color the key output in cyan
+                from .logging_utils import Colors, _should_use_colors, _colorize
+                for line in result.stdout.splitlines():
+                    if _should_use_colors():
+                        colored_line = _colorize(line, Colors.CYAN)
+                        print(f"  {colored_line}", file=sys.stderr, flush=True)
+                    else:
+                        log_info(f"  {line}")
             else:
-                log_error(f"Socket is not working: {resolved_socket}")
-                sys.exit(1)
+                log_warn("  No keys found in selected agent")
+                if result.stderr:
+                    log_debug(f"  ssh-add error: {result.stderr}")
+        except Exception as e:
+            log_debug(f"Error listing keys: {e}")
         
         # Debug output
         if os.environ.get("DEBUG") == "1":
@@ -138,19 +224,6 @@ def execute_command_or_shell(
                 log_debug(f"  Type: symlink -> {resolved_socket}")
             else:
                 log_debug("  Type: regular socket")
-            log_debug("  Available keys:")
-            try:
-                result = subprocess.run(
-                    ["ssh-add", "-l"],
-                    env={"SSH_AUTH_SOCK": resolved_socket, **os.environ},
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                for line in result.stdout.splitlines():
-                    log_debug(f"    {line}")
-            except Exception:
-                pass
         
         # Expand socket path to absolute path for SSH
         from .platform_utils import expand_path
@@ -162,7 +235,14 @@ def execute_command_or_shell(
         
         # Override IdentityAgent to use the working socket
         # The config may specify a mux socket that doesn't exist, so we override it
-        ssh_cmd.extend(["-o", f"IdentityAgent={expanded_socket}"])
+        # For paths with spaces, we need to quote the value in SSH config format
+        # When using -o on command line, spaces in values should be handled by subprocess
+        # But SSH config format requires quotes for values with spaces
+        if " " in expanded_socket:
+            # Path has spaces - quote it for SSH config format
+            ssh_cmd.extend(["-o", f"IdentityAgent='{expanded_socket}'"])
+        else:
+            ssh_cmd.extend(["-o", f"IdentityAgent={expanded_socket}"])
         
         if os.environ.get("DEBUG") == "1":
             ssh_cmd.append("-v")
