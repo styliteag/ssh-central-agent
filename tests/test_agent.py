@@ -1,8 +1,6 @@
 """Tests for agent operations."""
-import pytest
 from pathlib import Path
 from sca.agent import find_identity_file, get_key_fingerprint
-from sca.platform_utils import get_ssh_dir
 
 
 def test_find_identity_file():

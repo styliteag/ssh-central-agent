@@ -15,7 +15,7 @@ except ImportError:
     cli = None
 from .agent import (
     find_identity_file, setup_temp_agent, cleanup_temp_agent,
-    build_ssh_cmd, get_agent_key_count, get_key_fingerprint, check_key_in_agent
+    get_key_fingerprint, check_key_in_agent
 )
 from .connection import (
     determine_security_level, start_remote_agent,
@@ -23,12 +23,12 @@ from .connection import (
 )
 from .multiplexer import setup_python_multiplexer
 from .socket_utils import verify_socket_working, resolve_socket_path
-from .process import kill_if_exists, verify_remote_agent_working
+from .process import kill_if_exists
 from .config import patch_jump_aliases
 from .logging_utils import (
     log_info, log_error, log_success, log_warn, log_debug
 )
-from .platform_utils import expand_path, get_home_dir
+from .platform_utils import expand_path
 
 
 # Constants

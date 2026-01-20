@@ -3,13 +3,11 @@ Socket utilities for SSH agent communication with cross-platform support.
 Supports both Unix sockets (Linux/macOS) and Windows named pipes.
 """
 import os
-import socket
 import stat
 import time
 from pathlib import Path
-from typing import Optional
 
-from .platform_utils import is_windows, is_named_pipe, is_unix_socket, get_socket_type, expand_path
+from .platform_utils import is_windows, is_named_pipe
 from .logging_utils import log_debug
 
 

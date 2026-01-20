@@ -1,5 +1,4 @@
 """Tests for socket utilities."""
-import pytest
 from sca.socket_utils import (
     check_agent_socket, verify_socket_working,
     wait_for_socket, resolve_socket_path

@@ -7,13 +7,12 @@ import socket
 import subprocess
 import time
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Any
+from typing import Dict, Optional, Any
 
 from .agent import (
-    find_identity_file, setup_temp_agent, cleanup_temp_agent,
-    build_ssh_cmd, get_key_fingerprint, check_key_in_agent, get_agent_key_count
+    find_identity_file, setup_temp_agent, build_ssh_cmd, get_key_fingerprint, check_key_in_agent, get_agent_key_count
 )
-from .socket_utils import verify_socket_working, check_agent_socket, wait_for_socket
+from .socket_utils import verify_socket_working, check_agent_socket
 from .process import (
     verify_remote_agent_working, check_ssh_agent_running,
     kill_all_sca_processes, process_exists

@@ -1,9 +1,8 @@
 """Tests for platform utilities."""
-import pytest
 from sca.platform_utils import (
     is_windows, is_macos, is_linux,
     expand_path, get_home_dir, get_ssh_dir,
-    is_named_pipe, is_unix_socket, get_socket_type
+    is_named_pipe, get_socket_type
 )
 
 

@@ -5,7 +5,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional
 
 from .logging_utils import log_error, log_info, log_success
 from .process import kill_all_sca_processes

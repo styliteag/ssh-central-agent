@@ -3,7 +3,6 @@ Colored logging utilities using ANSI codes (standard library only).
 """
 import os
 import sys
-from typing import Optional
 
 
 # ANSI color codes

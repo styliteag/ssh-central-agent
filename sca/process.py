@@ -4,7 +4,6 @@ Cross-platform process management utilities (standard library only).
 import os
 import signal
 import subprocess
-from typing import List, Optional
 
 from .logging_utils import log_info, log_debug
 from .platform_utils import is_windows

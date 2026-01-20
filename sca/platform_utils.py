@@ -4,7 +4,6 @@ Platform detection and utilities for cross-platform support.
 import os
 import sys
 from pathlib import Path
-from typing import Optional
 
 
 def is_windows() -> bool:

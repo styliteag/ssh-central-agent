@@ -3,14 +3,12 @@ SSH agent operations: finding identity files, setting up temporary agents, etc.
 """
 import os
 import subprocess
-import tempfile
 from pathlib import Path
 from typing import Optional, Tuple, List
 
-from .platform_utils import get_ssh_dir, expand_path, get_home_dir
-from .logging_utils import log_info, log_error, log_success, log_debug, log_warn
+from .platform_utils import get_ssh_dir, expand_path
+from .logging_utils import log_info, log_error, log_success, log_debug
 from .process import kill_if_exists
-from .socket_utils import check_agent_socket
 
 
 def find_identity_file() -> Optional[Path]:

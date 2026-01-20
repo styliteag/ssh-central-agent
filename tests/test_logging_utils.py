@@ -1,6 +1,5 @@
 """Tests for logging utilities."""
 import os
-import sys
 from sca.logging_utils import (
     log_error, log_warn, log_info, log_success,
     log_debug, log_note, _should_use_colors

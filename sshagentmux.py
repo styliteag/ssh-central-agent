@@ -42,7 +42,6 @@ import json
 if sys.platform == "win32":
     try:
         import win32file
-        import win32pipe
         HAS_WIN32 = True
     except ImportError:
         HAS_WIN32 = False

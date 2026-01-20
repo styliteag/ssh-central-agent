@@ -1,13 +1,10 @@
 """
 Configuration management and SSH config patching.
 """
-import os
 import re
 from pathlib import Path
-from typing import Optional
 
 from .logging_utils import log_info, log_debug
-from .platform_utils import get_home_dir
 
 
 def patch_jump_aliases(

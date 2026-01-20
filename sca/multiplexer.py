@@ -4,19 +4,13 @@ Multiplexer setup: Python (sshagentmux.py) implementation.
 import logging
 import multiprocessing
 import os
-import shutil
-import time
-from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict
 
 from . import agentmux
-from .platform_utils import get_home_dir, is_macos, is_windows
 from .logging_utils import (
-    log_info, log_error, log_success, log_warn, log_debug, log_note,
-    color_file_header, color_reset
+    log_info, log_warn, log_debug
 )
-from .socket_utils import wait_for_socket, verify_socket_working
-from .process import kill_if_exists, process_exists
+from .socket_utils import wait_for_socket
 
 
 def setup_python_multiplexer(
