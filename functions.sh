@@ -475,18 +475,9 @@ find_identity_file() {
             fi
         fi
     fi
-    
-    # Check for common key name patterns (id_ed25519_*, id_rsa_*, etc.)
-    for key_file in ~/.ssh/id_ed25519_* ~/.ssh/id_rsa_* ~/.ssh/id_ecdsa_*; do
-        # Skip .pub files
-        if [ -f "$key_file" ] && [ -r "$key_file" ] && [[ ! "$key_file" =~ \.pub$ ]]; then
-            echo "$key_file"
-            return 0
-        fi
-    done 2>/dev/null || true
-    
+
     # Fall back to standard identity file locations
-    for key_file in ~/.ssh/id_ed25519 ~/.ssh/id_rsa ~/.ssh/id_ecdsa ~/.ssh/id_dsa; do
+    for key_file in ~/.ssh/id_ed25519 ~/.ssh/id_rsa ~/.ssh/id_ecdsa; do
         if [ -f "$key_file" ] && [ -r "$key_file" ]; then
             echo "$key_file"
             return 0
