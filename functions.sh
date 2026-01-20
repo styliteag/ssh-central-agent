@@ -19,6 +19,14 @@
 #####################
 
 #==============================================================================
+# CONSTANTS
+#==============================================================================
+
+readonly PROC_SSH_RAGENT=" ragent "
+readonly PROC_PYTHON_MUX="sshagentmux.py"
+readonly PROC_RUST_MUX="ssh-agent-mux"
+
+#==============================================================================
 # COLOR AND LOGGING UTILITIES
 #==============================================================================
 
@@ -235,20 +243,10 @@ extract_host_block() {
   local file="$1"
   local line_num="$2"
   
-  # Find the start of this Host block (go backwards to find the Host line)
-  # Search specifically for "Host " (with space) or "Match " to ensure we get the directive line
-  local start_line=$line_num
-  while [ $start_line -gt 0 ]; do
-    local line_content=$(sed -n "${start_line}p" "$file" 2>/dev/null)
-    # Check if this line starts with "Host " (with space) or "Match " (with space)
-    if echo "$line_content" | grep -qiE "^[[:space:]]*(Host|Match)[[:space:]]"; then
-      break
-    fi
-    start_line=$((start_line - 1))
-  done
-  
-  # Verify we found a Host/Match line
-  if [ $start_line -eq 0 ]; then
+  # Find the start of this Host block using the helper function
+  local start_line
+  start_line=$(find_host_block_start "$file" "$line_num")
+  if [ $? -ne 0 ] || [ -z "$start_line" ]; then
     return 1
   fi
   
@@ -378,30 +376,20 @@ cleanup() {
     
     # Kill SSH agent forwarder
     if [ -n "$SSH_PID" ]; then
-        if kill -0 "$SSH_PID" 2>/dev/null; then
-            log_info "Stopping SSH agent forwarder (PID $SSH_PID)"
-            kill -TERM "$SSH_PID" 2>/dev/null || true
-        fi
-        log_info "Killing SSH processes with ragent"
-        pkill -f " ragent " 2>/dev/null || true
+        kill_if_exists "$SSH_PID" "SSH agent forwarder"
+        kill_processes "$PROC_SSH_RAGENT" "SSH agent forwarder"
         log_info "Removing SSH agent socket: $SCA_SSH_AUTH_SOCK"
         rm -f "$SCA_SSH_AUTH_SOCK" 2>/dev/null || true
     fi
     
     # Kill multiplexer processes
     if [ -n "$MUX_PID" ]; then
-        if kill -0 "$MUX_PID" 2>/dev/null; then
-            log_info "Stopping multiplexer (PID $MUX_PID)"
-            kill -TERM "$MUX_PID" 2>/dev/null || true
-        fi
-        # Kill Python multiplexer if we started one
-        log_info "Killing Python multiplexer (sshagentmux.py)"
-        pkill -f "sshagentmux.py" 2>/dev/null || true
-        # Kill ssh-agent-mux if we started it directly (not as service)
+        kill_if_exists "$MUX_PID" "multiplexer"
+        kill_processes "$PROC_PYTHON_MUX" "Python multiplexer"
         if [ -n "$RUST_MUX_PID" ]; then
-            log_info "Killing ssh-agent-mux (PID $RUST_MUX_PID)"
-            pkill -x "ssh-agent-mux" 2>/dev/null || true
+            kill_if_exists "$RUST_MUX_PID" "ssh-agent-mux"
         fi
+        kill_process_by_name "$PROC_RUST_MUX"
         log_info "Removing mux socket: $MUX_SSH_AUTH_SOCK"
         rm -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || true
     fi
@@ -438,6 +426,30 @@ kill_if_exists() {
     fi
 }
 
+# Kill processes by pattern
+kill_processes() {
+    local pattern=$1
+    local name=$2
+    if pkill -f "$pattern" 2>/dev/null; then
+        log_info "Killed $name processes"
+    fi
+}
+
+# Kill processes by exact name
+kill_process_by_name() {
+    local name=$1
+    if pkill -x "$name" 2>/dev/null; then
+        log_info "Killed $name processes"
+    fi
+}
+
+# Kill all SCA-related processes
+kill_all_sca_processes() {
+    kill_processes "$PROC_SSH_RAGENT" "SSH agent forwarder"
+    kill_processes "$PROC_PYTHON_MUX" "Python multiplexer"
+    kill_process_by_name "$PROC_RUST_MUX"
+}
+
 # Check if an SSH agent socket is working
 check_agent_socket() {
     local socket=$1
@@ -446,7 +458,19 @@ check_agent_socket() {
 
 # Check if SSH process with ragent is still running
 check_ssh_agent_running() {
-    pgrep -f " ragent " >/dev/null 2>&1
+    pgrep -f "$PROC_SSH_RAGENT" >/dev/null 2>&1
+}
+
+# Verify socket exists and is working (combined check)
+verify_socket_working() {
+    local socket=$1
+    [ -S "$socket" ] && check_agent_socket "$socket"
+}
+
+# Verify socket exists, is working, and SSH process is running
+verify_remote_agent_working() {
+    local socket=$1
+    [ -S "$socket" ] && check_agent_socket "$socket" && check_ssh_agent_running
 }
 
 # Display harmless error note for ssh-agent-mux
@@ -454,6 +478,11 @@ show_harmless_error_note() {
     log_note "You can safely ignore these harmless errors:"
     echo "  $(color_stderr setaf 3)-$(color_stderr sgr0) 'ERROR [ssh_agent_mux] Unexpected error on socket ... when requesting session-bind@openssh.com extension: Agent: Protocol error: Unexpected response received'" >&2
     echo "  $(color_stderr setaf 3)-$(color_stderr sgr0) 'ERROR [ssh_agent_lib::agent] Error handling message: Failure'" >&2
+}
+
+# Filter out harmless Rust mux errors from log output
+filter_rust_mux_errors() {
+    grep -vE "ERROR \[ssh_agent_lib::agent\] Error handling message: Failure|ERROR \[ssh_agent_mux\] Unexpected error on socket.*when requesting session-bind@openssh.com extension.*Protocol error.*Unexpected response received"
 }
 
 # Find identity file in common locations
@@ -583,7 +612,7 @@ determine_security_level() {
     
     # If we have a mux socket with the local key, use it directly
     # Otherwise, use build_ssh_cmd which will use temp agent or identity file
-    if [ -S "$MUX_SSH_AUTH_SOCK" ] && check_agent_socket "$MUX_SSH_AUTH_SOCK"; then
+    if verify_socket_working "$MUX_SSH_AUTH_SOCK"; then
         # Check if mux socket has the local key (needed for sca-key connection)
         IDENTITY_FILE=$(find_identity_file)
         if [ -n "$IDENTITY_FILE" ]; then
@@ -663,7 +692,7 @@ start_remote_agent() {
             return 1
         fi
         # Check if socket exists and is working
-        if [ -S "$SCA_SSH_AUTH_SOCK" ] && check_agent_socket "$SCA_SSH_AUTH_SOCK"; then
+        if verify_socket_working "$SCA_SSH_AUTH_SOCK"; then
             echo "$ssh_pid"
             return 0
         fi
@@ -683,13 +712,13 @@ start_remote_agent() {
 # Wait for socket to be created
 wait_for_socket() {
     local socket=$1
-    local max_iterations=${2:-$SOCKET_WAIT_MAX}
-    local delay=${3:-$SOCKET_WAIT_DELAY}
+    local max_iterations=${2:-${SOCKET_WAIT_MAX:-10}}
+    local delay=${3:-${SOCKET_WAIT_DELAY:-0.1}}
     local iterations=0
     
-    while [ ! -S "$socket" ] && [ $iterations -lt $max_iterations ]; do
+    while [ ! -S "$socket" ] && [ "$iterations" -lt "$max_iterations" ]; do
         ((iterations++))
-        sleep $delay
+        sleep "$delay"
     done
     
     [ -S "$socket" ]
@@ -762,7 +791,7 @@ execute_command_or_shell() {
       log_error "Socket symlink target does not exist: $resolved_socket"
       exit 1
     fi
-    if ! check_agent_socket "$SSH_SOCKET"; then
+    if ! verify_socket_working "$SSH_SOCKET"; then
       log_error "Socket is not working: $SSH_SOCKET"
       exit 1
     fi
@@ -871,7 +900,7 @@ execute_command_or_shell() {
         SOCKET_TO_CHECK="$SCA_SSH_AUTH_SOCK"
       fi
       
-      if ! check_agent_socket "$SOCKET_TO_CHECK"; then
+      if ! verify_socket_working "$SOCKET_TO_CHECK"; then
         # Don't restart if we're intentionally exiting
         if [ "$SCA_EXITING" == "true" ]; then
           log_info "Exiting due to intentional termination"
@@ -1022,7 +1051,7 @@ setup_new_connection() {
   # Always set up multiplexer when we have a remote agent
   # If we have a local/temporary agent, multiplex them
   # If not, the multiplexer will just forward to the remote agent
-  if [ -S "$SCA_SSH_AUTH_SOCK" ] && check_agent_socket "$SCA_SSH_AUTH_SOCK"; then
+  if verify_socket_working "$SCA_SSH_AUTH_SOCK"; then
     log_info "Muxing the agents to one"
     USE_RUST_MUX=false
     [ "$MUX_TYPE" = "rust" ] && USE_RUST_MUX=true
@@ -1144,30 +1173,23 @@ check_existing_connections() {
   MY_SOCKS_WORKING=true
 
   # Check if socket exists and is working, AND if the SSH process is still running
-  if [ -S "$SCA_SSH_AUTH_SOCK" ] && check_agent_socket "$SCA_SSH_AUTH_SOCK" && check_ssh_agent_running; then
+  if verify_remote_agent_working "$SCA_SSH_AUTH_SOCK"; then
     SCA_SOCK=true
   fi
 
   # Only check for mux socket if we're using multiplexer (will be determined later)
   # For now, check if it exists and is working
   if [ -S "$MUX_SSH_AUTH_SOCK" ]; then
-    if check_agent_socket "$MUX_SSH_AUTH_SOCK"; then
-      # Also verify SSH process is running (mux depends on it)
-      if check_ssh_agent_running; then
-        MUX_SOCK=true
-      fi
+    if check_agent_socket "$MUX_SSH_AUTH_SOCK" && check_ssh_agent_running; then
+      MUX_SOCK=true
     fi
   fi
 
   # If remote socket is not working or SSH process is dead, we need to restart
   # If mux socket doesn't exist but remote does, that's OK (might be identity-file-only mode)
   if [ "$SCA_SOCK" == "false" ]; then
-    log_info "Killing remote agent by finding ssh with ragent"
-    pkill -f " ragent "
-    log_info "Killing muxagent by kill sshagentmux.py"
-    pkill -f "sshagentmux.py"
-    log_info "Killing ssh-agent-mux processes"
-    pkill -x "ssh-agent-mux" 2>/dev/null || true
+    log_info "Cleaning up stale connections"
+    kill_all_sca_processes
     log_info "Removing stale socket files"
     rm -f "$SCA_SSH_AUTH_SOCK" 2>/dev/null || true
     rm -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || true
@@ -1175,8 +1197,8 @@ check_existing_connections() {
   elif [ "$MUX_SOCK" == "false" ] && [ -S "$MUX_SSH_AUTH_SOCK" ]; then
     # Mux socket exists but not working - restart multiplexer
     log_info "Mux socket exists but not working, restarting multiplexer"
-    pkill -f "sshagentmux.py"
-    pkill -x "ssh-agent-mux" 2>/dev/null || true
+    kill_processes "$PROC_PYTHON_MUX" "Python multiplexer"
+    kill_process_by_name "$PROC_RUST_MUX"
     rm -f "$MUX_SSH_AUTH_SOCK" 2>/dev/null || true
     MY_SOCKS_WORKING=false
   fi
@@ -1190,9 +1212,9 @@ use_existing_connection() {
   if [ -z "$TEMP_AGENT_SOCK" ]; then
     # Check if we have a local agent (original SSH_AUTH_SOCK or ORG_SSH_AUTH_SOCK)
     local has_local_agent=false
-    if [ -n "$ORG_SSH_AUTH_SOCK" ] && [ -S "$ORG_SSH_AUTH_SOCK" ] && check_agent_socket "$ORG_SSH_AUTH_SOCK"; then
+    if verify_socket_working "$ORG_SSH_AUTH_SOCK"; then
       has_local_agent=true
-    elif [ -n "$SSH_AUTH_SOCK" ] && [ -S "$SSH_AUTH_SOCK" ] && check_agent_socket "$SSH_AUTH_SOCK"; then
+    elif verify_socket_working "$SSH_AUTH_SOCK"; then
       # Check if this is not the remote agent socket
       if [ "$SSH_AUTH_SOCK" != "$SCA_SSH_AUTH_SOCK" ] && [ "$SSH_AUTH_SOCK" != "$MUX_SSH_AUTH_SOCK" ]; then
         has_local_agent=true
@@ -1203,7 +1225,7 @@ use_existing_connection() {
       # No local agent - check if mux socket has local key
       local needs_local_key=true
       IDENTITY_FILE=$(find_identity_file)
-      if [ -n "$IDENTITY_FILE" ] && [ -S "$MUX_SSH_AUTH_SOCK" ] && check_agent_socket "$MUX_SSH_AUTH_SOCK"; then
+      if [ -n "$IDENTITY_FILE" ] && verify_socket_working "$MUX_SSH_AUTH_SOCK"; then
         # Try to get fingerprint of identity file
         local id_fingerprint
         id_fingerprint=$(ssh-keygen -lf "$IDENTITY_FILE" 2>/dev/null | awk '{print $2}')
@@ -1263,10 +1285,10 @@ use_existing_connection() {
 
   # If we have a temporary agent and a remote agent, set up multiplexer
   # This ensures both keys are available (temp agent for ProxyCommand, remote for main connection)
-  if [ -n "$TEMP_AGENT_SOCK" ] && [ -S "$TEMP_AGENT_SOCK" ] && [ -S "$SCA_SSH_AUTH_SOCK" ] && check_agent_socket "$SCA_SSH_AUTH_SOCK"; then
+  if [ -n "$TEMP_AGENT_SOCK" ] && [ -S "$TEMP_AGENT_SOCK" ] && verify_socket_working "$SCA_SSH_AUTH_SOCK"; then
     # Check if mux socket already exists and has both keys
     local needs_mux_setup=true
-    if [ -S "$MUX_SSH_AUTH_SOCK" ] && check_agent_socket "$MUX_SSH_AUTH_SOCK"; then
+    if verify_socket_working "$MUX_SSH_AUTH_SOCK"; then
       # Check if mux socket has the temporary agent's key
       local temp_key_fingerprint
       temp_key_fingerprint=$(SSH_AUTH_SOCK="$TEMP_AGENT_SOCK" ssh-add -l 2>/dev/null | head -1 | awk '{print $2}')
@@ -1308,10 +1330,10 @@ use_existing_connection() {
   fi
 
   # Use the multiplexed socket if available, otherwise use remote agent
-  if [ -S "$MUX_SSH_AUTH_SOCK" ] && check_agent_socket "$MUX_SSH_AUTH_SOCK"; then
+  if verify_socket_working "$MUX_SSH_AUTH_SOCK"; then
     log_info "Using working multiplexed SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK"
     export SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK
-  elif [ -S "$SCA_SSH_AUTH_SOCK" ] && check_agent_socket "$SCA_SSH_AUTH_SOCK"; then
+  elif verify_socket_working "$SCA_SSH_AUTH_SOCK"; then
     log_info "Using working remote SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK"
     export SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK
     export MUX_SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK
@@ -1327,10 +1349,8 @@ use_existing_connection() {
   done
 }
 
-# Setup Rust multiplexer (ssh-agent-mux)
-setup_rust_multiplexer() {
-    log_info "Using ssh-agent-mux (Rust)"
-    
+# Check if ssh-agent-mux is installed and config exists
+check_rust_mux_installed() {
     if ! command -v ssh-agent-mux >/dev/null 2>&1; then
         log_error "ssh-agent-mux not found in PATH"
         log_info "Hint: Install it from https://github.com/overhacked/ssh-agent-mux"
@@ -1350,175 +1370,176 @@ setup_rust_multiplexer() {
         echo 'listen_path = "~/.ssh/ssh-agent-mux.sock"' >&2
         exit 1
     fi
+    echo "$CONFIG_FILE"
+}
 
-    # Check if ssh-agent-mux is installed as a service
-    RUST_MUX_IS_SERVICE=false
+# Check if ssh-agent-mux is running as a service
+check_rust_mux_service() {
     if [[ "$OSTYPE" == "darwin"* ]]; then
-        # Check for launchd service on macOS - check for plist file
         PLIST_FILE="$HOME/Library/LaunchAgents/net.ross-williams.ssh-agent-mux.plist"
-        if [ -f "$PLIST_FILE" ]; then
-            # Also verify it's loaded
-            if launchctl list 2>/dev/null | grep -q "net.ross-williams.ssh-agent-mux"; then
-                RUST_MUX_IS_SERVICE=true
-                log_success "Detected ssh-agent-mux as launchd service"
-            fi
+        if [ -f "$PLIST_FILE" ] && launchctl list 2>/dev/null | grep -q "net.ross-williams.ssh-agent-mux"; then
+            log_success "Detected ssh-agent-mux as launchd service"
+            return 0
         fi
     elif command -v systemctl >/dev/null 2>&1; then
-        # Check for systemd user service on Linux
         if systemctl --user list-unit-files 2>/dev/null | grep -q "ssh-agent-mux.service"; then
-            RUST_MUX_IS_SERVICE=true
             log_success "Detected ssh-agent-mux as systemd service"
+            return 0
         fi
     fi
+    return 1
+}
 
-    if [ "$RUST_MUX_IS_SERVICE" == "true" ]; then
-        # Service Mode: Use existing ssh-agent-mux service
-        # Extract socket path from config (default: ~/.ssh/ssh-agent-mux.sock)
-        RUST_MUX_SOCKET=$(grep -E '^\s*listen_path\s*=' "$CONFIG_FILE" | sed -E 's/^[^"]*"([^"]+)".*/\1/' | sed "s|~|$HOME|")
-        if [ -z "$RUST_MUX_SOCKET" ]; then
-             RUST_MUX_SOCKET="$HOME/.ssh/ssh-agent-mux.sock"
-        fi
+# Setup Rust multiplexer in service mode
+setup_rust_mux_service_mode() {
+    local config_file=$1
+    local rust_mux_socket
+    
+    # Extract socket path from config (default: ~/.ssh/ssh-agent-mux.sock)
+    rust_mux_socket=$(grep -E '^\s*listen_path\s*=' "$config_file" | sed -E 's/^[^"]*"([^"]+)".*/\1/' | sed "s|~|$HOME|")
+    rust_mux_socket="${rust_mux_socket:-$HOME/.ssh/ssh-agent-mux.sock}"
 
-        if ! pgrep -x "ssh-agent-mux" >/dev/null; then
-             log_error "ssh-agent-mux service is not running"
-             log_info "Hint: Start it with: ssh-agent-mux --restart-service"
-             if [[ "$OSTYPE" == "darwin"* ]]; then
-                 log_info "Hint: Or (macOS): launchctl kickstart -k gui/$(id -u)/net.ross-williams.ssh-agent-mux"
-             elif command -v systemctl >/dev/null 2>&1; then
-                 log_info "Hint: Or (Linux): systemctl --user start ssh-agent-mux.service"
-             fi
-             exit 1
-        fi
-
-        # Configure macOS logging if needed
+    if ! pgrep -x "$PROC_RUST_MUX" >/dev/null; then
+        log_error "ssh-agent-mux service is not running"
+        log_info "Hint: Start it with: ssh-agent-mux --restart-service"
         if [[ "$OSTYPE" == "darwin"* ]]; then
-         PLIST_FILE="$HOME/Library/LaunchAgents/net.ross-williams.ssh-agent-mux.plist"
-         if [ -f "$PLIST_FILE" ]; then
-             # Check if logging keys are configured
-             if ! grep -q "StandardOutPath" "$PLIST_FILE" || ! grep -q "StandardErrorPath" "$PLIST_FILE"; then
-                 log_info "Configuring file-based logging in launchd plist..."
-                 cp "$PLIST_FILE" "$PLIST_FILE.bak"
-                 # Add logging paths before closing </dict>
-                 sed -i '' '/<\/dict>/i\
+            log_info "Hint: Or (macOS): launchctl kickstart -k gui/$(id -u)/net.ross-williams.ssh-agent-mux"
+        elif command -v systemctl >/dev/null 2>&1; then
+            log_info "Hint: Or (Linux): systemctl --user start ssh-agent-mux.service"
+        fi
+        exit 1
+    fi
+
+    # Configure macOS logging if needed
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        local plist_file="$HOME/Library/LaunchAgents/net.ross-williams.ssh-agent-mux.plist"
+        if [ -f "$plist_file" ] && { ! grep -q "StandardOutPath" "$plist_file" || ! grep -q "StandardErrorPath" "$plist_file"; }; then
+            log_info "Configuring file-based logging in launchd plist..."
+            cp "$plist_file" "$plist_file.bak"
+            sed -i '' '/<\/dict>/i\
         <key>StandardOutPath</key>\
         <string>'"$HOME"'/Library/Logs/ssh-agent-mux.log</string>\
         <key>StandardErrorPath</key>\
         <string>'"$HOME"'/Library/Logs/ssh-agent-mux.err.log</string>
-' "$PLIST_FILE"
-                 log_info "Restarting ssh-agent-mux service to apply logging configuration..."
-                 launchctl bootout gui/$(id -u)/net.ross-williams.ssh-agent-mux
-                 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/net.ross-williams.ssh-agent-mux.plist
-                 sleep 1
-             fi
-         fi
-         
-         # Display logs if available
-         MACOS_LOG_FILE="$HOME/Library/Logs/ssh-agent-mux.log"
-         if [ -f "$MACOS_LOG_FILE" ]; then
-              log_info "ssh-agent-mux logs: $MACOS_LOG_FILE"
-              show_harmless_error_note
-              echo "$(color_stderr setaf 6)--- Recent log entries (filtered) ---$(color_stderr sgr0)" >&2
-              # Filter out harmless errors from ssh-agent-mux
-              tail -n 50 "$MACOS_LOG_FILE" | grep -vE "ERROR \[ssh_agent_lib::agent\] Error handling message: Failure|ERROR \[ssh_agent_mux\] Unexpected error on socket.*when requesting session-bind@openssh.com extension.*Protocol error.*Unexpected response received" | tail -n 10 >&2
-              echo "$(color_stderr setaf 6)--- Tailing logs (filtered, PID will be cleaned up on exit) ---$(color_stderr sgr0)" >&2
-              # Filter out harmless errors while tailing
-              tail -Fq "$MACOS_LOG_FILE" 2>&1 | grep -vE "ERROR \[ssh_agent_lib::agent\] Error handling message: Failure|ERROR \[ssh_agent_mux\] Unexpected error on socket.*when requesting session-bind@openssh.com extension.*Protocol error.*Unexpected response received" >&2 &
-              TAIL_LOG_PID=$!
-         else
-              log_info "To view ssh-agent-mux logs (macOS):"
-              echo "  log stream --predicate 'process == \"ssh-agent-mux\"' --level debug" >&2
-              show_harmless_error_note
-         fi
+' "$plist_file"
+            log_info "Restarting ssh-agent-mux service to apply logging configuration..."
+            launchctl bootout gui/$(id -u)/net.ross-williams.ssh-agent-mux
+            launchctl bootstrap gui/$(id -u) "$plist_file"
+            sleep 1
+        fi
+        
+        # Display logs if available
+        local macos_log_file="$HOME/Library/Logs/ssh-agent-mux.log"
+        if [ -f "$macos_log_file" ]; then
+            log_info "ssh-agent-mux logs: $macos_log_file"
+            show_harmless_error_note
+            echo "$(color_stderr setaf 6)--- Recent log entries (filtered) ---$(color_stderr sgr0)" >&2
+            tail -n 50 "$macos_log_file" | filter_rust_mux_errors | tail -n 10 >&2
+            echo "$(color_stderr setaf 6)--- Tailing logs (filtered, PID will be cleaned up on exit) ---$(color_stderr sgr0)" >&2
+            tail -Fq "$macos_log_file" 2>&1 | filter_rust_mux_errors >&2 &
+            TAIL_LOG_PID=$!
+        else
+            log_info "To view ssh-agent-mux logs (macOS):"
+            echo "  log stream --predicate 'process == \"ssh-agent-mux\"' --level debug" >&2
+            show_harmless_error_note
+        fi
     elif command -v journalctl >/dev/null 2>&1; then
-         # Display logs with filtering for Linux systemd service
-         log_info "ssh-agent-mux logs (Linux systemd):"
-         show_harmless_error_note
-         echo "$(color_stderr setaf 6)--- Recent log entries (filtered) ---$(color_stderr sgr0)" >&2
-         # Filter out harmless errors from recent logs
-         journalctl --user -u ssh-agent-mux -n 50 --no-pager 2>/dev/null | grep -vE "ERROR \[ssh_agent_lib::agent\] Error handling message: Failure|ERROR \[ssh_agent_mux\] Unexpected error on socket.*when requesting session-bind@openssh.com extension.*Protocol error.*Unexpected response received" | tail -n 10 >&2
-         echo "$(color_stderr setaf 6)--- Tailing logs (filtered, PID will be cleaned up on exit) ---$(color_stderr sgr0)" >&2
-         # Filter out harmless errors while tailing
-         journalctl --user -u ssh-agent-mux -f 2>&1 | grep -vE "ERROR \[ssh_agent_lib::agent\] Error handling message: Failure|ERROR \[ssh_agent_mux\] Unexpected error on socket.*when requesting session-bind@openssh.com extension.*Protocol error.*Unexpected response received" >&2 &
-         TAIL_LOG_PID=$!
+        log_info "ssh-agent-mux logs (Linux systemd):"
+        show_harmless_error_note
+        echo "$(color_stderr setaf 6)--- Recent log entries (filtered) ---$(color_stderr sgr0)" >&2
+        journalctl --user -u ssh-agent-mux -n 50 --no-pager 2>/dev/null | filter_rust_mux_errors | tail -n 10 >&2
+        echo "$(color_stderr setaf 6)--- Tailing logs (filtered, PID will be cleaned up on exit) ---$(color_stderr sgr0)" >&2
+        journalctl --user -u ssh-agent-mux -f 2>&1 | filter_rust_mux_errors >&2 &
+        TAIL_LOG_PID=$!
     fi
 
     # Warn if remote agent socket is not in config
-    if ! grep -q "scadev-agent.sock" "$CONFIG_FILE"; then
-         log_warn "Your ssh-agent-mux config does not seem to include ~/.ssh/scadev-agent.sock"
-         log_info "Hint: Add it to agent_sock_paths in $CONFIG_FILE:"
-             echo 'agent_sock_paths = ["'"$SSH_AUTH_SOCK"'", "~/.ssh/scadev-agent.sock"]' >&2
-        fi
+    if ! grep -q "scadev-agent.sock" "$config_file"; then
+        log_warn "Your ssh-agent-mux config does not seem to include ~/.ssh/scadev-agent.sock"
+        log_info "Hint: Add it to agent_sock_paths in $config_file:"
+        echo 'agent_sock_paths = ["'"$SSH_AUTH_SOCK"'", "~/.ssh/scadev-agent.sock"]' >&2
+    fi
 
-        OMUX_SSH_AUTH_SOCK=$RUST_MUX_SOCKET
-        # Don't set OMUX_SSH_AGENT_PID for services - they're managed by launchctl/systemctl
-        OMUX_SSH_AGENT_PID=""
-        SKIP_SYMLINK=false
-        
+    OMUX_SSH_AUTH_SOCK=$rust_mux_socket
+    OMUX_SSH_AGENT_PID=""
+    SKIP_SYMLINK=false
+}
+
+# Setup Rust multiplexer in direct mode
+setup_rust_mux_direct_mode() {
+    local rust_mux_socket=$MUX_SSH_AUTH_SOCK
+    local agent1 agent2 temp_config rust_mux_log
+    
+    log_info "ssh-agent-mux is not installed as a service, starting it directly"
+    rm -f "$rust_mux_socket"
+    
+    # Determine agent order based on REVERSE flag
+    if [ "$REVERSE" == "1" ]; then
+        agent1="$SCA_SSH_AUTH_SOCK"
+        agent2="$SSH_AUTH_SOCK"
     else
-        # Direct Mode: Run ssh-agent-mux directly (not as service)
-        log_info "ssh-agent-mux is not installed as a service, starting it directly"
-        
-        # Determine socket path (use mux_auth_sock template variable)
-        RUST_MUX_SOCKET=$MUX_SSH_AUTH_SOCK
-        
-        # Remove socket if it exists
-        rm -f "$RUST_MUX_SOCKET"
-        
-        # Determine agent order based on REVERSE flag
-        if [ "$REVERSE" == "1" ]; then
-            AGENT1="$SCA_SSH_AUTH_SOCK"
-            AGENT2="$SSH_AUTH_SOCK"
-        else
-            AGENT1="$SSH_AUTH_SOCK"
-            AGENT2="$SCA_SSH_AUTH_SOCK"
-        fi
-        
-        # Create temporary config file for ssh-agent-mux
-        TEMP_CONFIG=$(mktemp)
-        cat > "$TEMP_CONFIG" <<EOF
+        agent1="$SSH_AUTH_SOCK"
+        agent2="$SCA_SSH_AUTH_SOCK"
+    fi
+    
+    # Create temporary config file
+    temp_config=$(mktemp)
+    cat > "$temp_config" <<EOF
 agent_sock_paths = [
-    "$AGENT1",
-    "$AGENT2",
+    "$agent1",
+    "$agent2",
 ]
-listen_path = "$RUST_MUX_SOCKET"
+listen_path = "$rust_mux_socket"
 log_level = "info"
 EOF
-        
-        # Start ssh-agent-mux with temporary config file
-        log_info "Starting ssh-agent-mux directly..."
-        # Create temp log file for filtered output
-        RUST_MUX_LOG=$(mktemp)
-        # Start ssh-agent-mux and filter its output
-        ssh-agent-mux --config "$TEMP_CONFIG" > "$RUST_MUX_LOG" 2>&1 &
-        RUST_MUX_PID=$!
-        log_info "Started ssh-agent-mux as PID $RUST_MUX_PID"
-        # Tail the log file with filtering in background
-        log_info "Starting log tail process for ssh-agent-mux..."
-        tail -Fq "$RUST_MUX_LOG" 2>&1 | grep -vE "ERROR \[ssh_agent_lib::agent\] Error handling message: Failure|ERROR \[ssh_agent_mux\] Unexpected error on socket.*when requesting session-bind@openssh.com extension.*Protocol error.*Unexpected response received" >&2 &
-        TAIL_LOG_PID=$!
-        log_info "Started log tail process as PID $TAIL_LOG_PID"
-        
-        # Clean up temp config file after a short delay (process should have read it)
-        (sleep 1 && rm -f "$TEMP_CONFIG") &
-        
-        # Wait for socket to be created
-        if ! wait_for_socket "$RUST_MUX_SOCKET"; then
-            log_error "Failed to start ssh-agent-mux or create socket at $RUST_MUX_SOCKET"
-            kill $RUST_MUX_PID 2>/dev/null
-            exit 1
-        fi
-        
-        # Verify it's working
-        if ! check_agent_socket "$RUST_MUX_SOCKET"; then
-            log_error "ssh-agent-mux socket created but not responding"
-            kill $RUST_MUX_PID 2>/dev/null
-            exit 1
-        fi
-        
-        OMUX_SSH_AUTH_SOCK=$RUST_MUX_SOCKET
-        OMUX_SSH_AGENT_PID=$RUST_MUX_PID
-        SKIP_SYMLINK=true
-        log_success "Started ssh-agent-mux directly (PID: $RUST_MUX_PID)"
+    
+    # Start ssh-agent-mux
+    log_info "Starting ssh-agent-mux directly..."
+    rust_mux_log=$(mktemp)
+    ssh-agent-mux --config "$temp_config" > "$rust_mux_log" 2>&1 &
+    RUST_MUX_PID=$!
+    log_info "Started ssh-agent-mux as PID $RUST_MUX_PID"
+    
+    # Tail logs with filtering
+    log_info "Starting log tail process for ssh-agent-mux..."
+    tail -Fq "$rust_mux_log" 2>&1 | filter_rust_mux_errors >&2 &
+    TAIL_LOG_PID=$!
+    log_info "Started log tail process as PID $TAIL_LOG_PID"
+    
+    # Clean up temp config after delay
+    (sleep 1 && rm -f "$temp_config") &
+    
+    # Wait for socket and verify
+    if ! wait_for_socket "$rust_mux_socket"; then
+        log_error "Failed to start ssh-agent-mux or create socket at $rust_mux_socket"
+        kill $RUST_MUX_PID 2>/dev/null
+        exit 1
+    fi
+    
+    if ! verify_socket_working "$rust_mux_socket"; then
+        log_error "ssh-agent-mux socket created but not responding"
+        kill $RUST_MUX_PID 2>/dev/null
+        exit 1
+    fi
+    
+    OMUX_SSH_AUTH_SOCK=$rust_mux_socket
+    OMUX_SSH_AGENT_PID=$RUST_MUX_PID
+    SKIP_SYMLINK=true
+    RUST_MUX_LOG=$rust_mux_log
+    log_success "Started ssh-agent-mux directly (PID: $RUST_MUX_PID)"
+}
+
+# Setup Rust multiplexer (ssh-agent-mux)
+setup_rust_multiplexer() {
+    local config_file
+    
+    log_info "Using ssh-agent-mux (Rust)"
+    config_file=$(check_rust_mux_installed)
+    
+    if check_rust_mux_service; then
+        setup_rust_mux_service_mode "$config_file"
+    else
+        setup_rust_mux_direct_mode
     fi
 }
 
@@ -1604,13 +1625,9 @@ parse_arguments() {
       ;;
     --kill)
       log_info "Killing all agents and remote connections..."
-      log_info "Killing remote agent (ssh with ragent)"
-      pkill -f " ragent "
-      log_info "Killing Python multiplexer (sshagentmux.py)"
-      pkill -f "sshagentmux.py"
+      kill_all_sca_processes
       log_info "Removing socket files"
-      rm -f $SCA_SSH_AUTH_SOCK
-      rm -f $MUX_SSH_AUTH_SOCK
+      rm -f "$SCA_SSH_AUTH_SOCK" "$MUX_SSH_AUTH_SOCK"
       log_success "All agents and connections killed"
       exit 0
       ;;
