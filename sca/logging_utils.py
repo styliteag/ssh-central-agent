@@ -2,6 +2,7 @@
 Colored logging utilities using ANSI codes (standard library only).
 """
 import os
+import re
 import sys
 
 
@@ -146,8 +147,6 @@ def color_reset() -> str:
 
 def highlight_line(line: str) -> str:
     """Syntax highlight a line of SSH config."""
-    import re
-    
     # Host or Match directive (bold blue for keyword, yellow for values)
     host_match = re.match(r'^(\s*)(Host|Match)\s+(.+)$', line, re.IGNORECASE)
     if host_match:

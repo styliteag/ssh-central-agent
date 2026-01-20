@@ -5,6 +5,7 @@ import os
 import re
 import socket
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Dict, Optional, Any
@@ -222,7 +223,6 @@ def start_remote_agent(
     
     # Start SSH process in background
     # Capture stderr to a temporary file for debugging
-    import tempfile
     ssh_stderr_file = tempfile.NamedTemporaryFile(mode='w', suffix='.log', delete=False, delete_on_close=False)
     ssh_stderr_file.close()
     

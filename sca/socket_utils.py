@@ -4,6 +4,7 @@ Supports both Unix sockets (Linux/macOS) and Windows named pipes.
 """
 import os
 import stat
+import subprocess
 import time
 from pathlib import Path
 
@@ -84,8 +85,6 @@ def _check_unix_socket_windows(socket_path: str) -> bool:
 
 def _test_socket_with_ssh_add(socket_path: str) -> bool:
     """Test socket by running ssh-add -l."""
-    import subprocess
-    
     env = os.environ.copy()
     env["SSH_AUTH_SOCK"] = socket_path
     

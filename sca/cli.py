@@ -4,6 +4,8 @@ CLI interface using argparse (standard library).
 import argparse
 import os
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -169,7 +171,6 @@ def add_host(playbook_dir: str, hostname: str) -> None:
         log_error(f"addhost script not found: {addhost_script}")
         sys.exit(1)
     
-    import subprocess
     try:
         subprocess.run([str(addhost_script), hostname], check=True)
     except subprocess.CalledProcessError as e:
@@ -232,8 +233,6 @@ def cli_main() -> Optional[None]:
     
     # Handle --version
     if args.version:
-        import shutil
-        from pathlib import Path
         from .platform_utils import expand_path
         
         python_exe = sys.executable

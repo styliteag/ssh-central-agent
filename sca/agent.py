@@ -3,6 +3,7 @@ SSH agent operations: finding identity files, setting up temporary agents, etc.
 """
 import os
 import subprocess
+import time
 from pathlib import Path
 from typing import Optional, Tuple, List
 
@@ -143,7 +144,6 @@ def cleanup_temp_agent(pid: int, socket_path: str) -> None:
     if pid:
         kill_if_exists(pid, "temporary SSH agent")
         # Wait a bit for clean shutdown
-        import time
         time.sleep(0.5)
         # Force kill if still running
         try:

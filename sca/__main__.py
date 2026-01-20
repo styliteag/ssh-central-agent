@@ -2,6 +2,7 @@
 Main entry point for SCA - SSH Central Agent.
 """
 import os
+import resource
 import signal
 import subprocess
 import sys
@@ -98,8 +99,6 @@ def execute_command_or_shell(
     elif ssh_mode:
         # SSH Mode: Direct SSH connection
         # Expand paths before checking (needed for fallback logic)
-        from .platform_utils import expand_path
-        from pathlib import Path
         expanded_mux_sock = str(expand_path(mux_ssh_auth_sock))
         expanded_ssh_auth_sock = str(expand_path(ssh_auth_sock))
         
@@ -202,7 +201,7 @@ def execute_command_or_shell(
             )
             if result.returncode == 0 and result.stdout.strip():
                 # Color the key output in cyan
-                from .logging_utils import Colors, _should_use_colors, _colorize
+                from .logging_utils import Colors, _colorize, _should_use_colors
                 for line in result.stdout.splitlines():
                     if _should_use_colors():
                         colored_line = _colorize(line, Colors.CYAN)
@@ -226,7 +225,6 @@ def execute_command_or_shell(
                 log_debug("  Type: regular socket")
         
         # Expand socket path to absolute path for SSH
-        from .platform_utils import expand_path
         expanded_socket = str(expand_path(resolved_socket))
         
         # Build SSH command
@@ -281,7 +279,6 @@ def execute_command_or_shell(
         # Close any file descriptors that might interfere (except stdin/stdout/stderr)
         # This ensures SSH gets a clean terminal
         try:
-            import resource
             maxfd = resource.getrlimit(resource.RLIMIT_NOFILE)[1]
             if maxfd == resource.RLIM_INFINITY:
                 maxfd = 1024
@@ -318,7 +315,6 @@ def execute_command_or_shell(
         log_info(f"WAIT in a Loop and check every {CHECK_SECONDS} if the Connection is dead")
         
         # Expand socket paths before checking
-        from .platform_utils import expand_path
         expanded_mux_sock = str(expand_path(mux_ssh_auth_sock))
         expanded_sca_sock = str(expand_path(ssh_auth_sock))
         
@@ -383,7 +379,6 @@ def setup_new_connection(
     log_info("No working agent found: Starting new connection")
     
     # Remove old sockets (expand paths first)
-    from .platform_utils import expand_path
     for sock in [sca_ssh_auth_sock, mux_ssh_auth_sock]:
         sock_path = Path(expand_path(sock))
         if sock_path.exists():
@@ -456,7 +451,6 @@ def setup_new_connection(
     skip_symlink = False
     
     # Expand socket path before checking
-    from .platform_utils import expand_path
     expanded_sca_sock = str(expand_path(sca_ssh_auth_sock))
     
     if verify_socket_working(expanded_sca_sock):
