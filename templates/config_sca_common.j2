@@ -20,6 +20,7 @@ TCPKeepAlive yes
 #IdentityAgent {{ sca_auth_sock }}
 ### ForwardAgent {{ sca_auth_sock }}
 IdentityAgent {{ mux_auth_sock }}
+IdentitiesOnly yes
 ### ForwardAgent {{ mux_auth_sock }}
 
 ### ProxyJump sca-jump_org
