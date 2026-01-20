@@ -581,16 +581,10 @@ build_ssh_cmd() {
 determine_security_level() {
     local ssh_cmd ssh_output ssh_exit_code my_level
     
-    # If we have an existing remote agent, use it directly (no need for temp agent)
-    # Otherwise, use build_ssh_cmd which may use temp agent
-    if [ -S "$SCA_SSH_AUTH_SOCK" ] && check_agent_socket "$SCA_SSH_AUTH_SOCK"; then
-        # Use existing remote agent directly
-        ssh_cmd="ssh -a -F $PLAYBOOK_DIR/$SSH_CONFIG_FILE -o IdentityAgent=$SCA_SSH_AUTH_SOCK"
-        log_debug "Determining security level with existing remote agent: $ssh_cmd"
-    else
-        ssh_cmd=$(build_ssh_cmd)
-        log_debug "Determining security level with: $ssh_cmd"
-    fi
+    # Always use build_ssh_cmd which will use temp agent if available,
+    # otherwise fall back to identity file or remote agent
+    ssh_cmd=$(build_ssh_cmd)
+    log_debug "Determining security level with: $ssh_cmd"
     
     ssh_output=$(eval "$ssh_cmd -o \"SetEnv SCA_NOLEVEL=1\" sca-key groups 2>&1")
     ssh_exit_code=$?
