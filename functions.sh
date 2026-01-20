@@ -581,8 +581,16 @@ build_ssh_cmd() {
 determine_security_level() {
     local ssh_cmd ssh_output ssh_exit_code my_level
     
-    ssh_cmd=$(build_ssh_cmd)
-    log_debug "Determining security level with: $ssh_cmd"
+    # If we have an existing remote agent, use it directly (no need for temp agent)
+    # Otherwise, use build_ssh_cmd which may use temp agent
+    if [ -S "$SCA_SSH_AUTH_SOCK" ] && check_agent_socket "$SCA_SSH_AUTH_SOCK"; then
+        # Use existing remote agent directly
+        ssh_cmd="ssh -a -F $PLAYBOOK_DIR/$SSH_CONFIG_FILE -o IdentityAgent=$SCA_SSH_AUTH_SOCK"
+        log_debug "Determining security level with existing remote agent: $ssh_cmd"
+    else
+        ssh_cmd=$(build_ssh_cmd)
+        log_debug "Determining security level with: $ssh_cmd"
+    fi
     
     ssh_output=$(eval "$ssh_cmd -o \"SetEnv SCA_NOLEVEL=1\" sca-key groups 2>&1")
     ssh_exit_code=$?
@@ -1688,7 +1696,8 @@ parse_arguments "$HELP" "$@"
 SCA_EXITING=false
 trap cleanup EXIT INT TERM
 
-validate_local_agent
+# Check for existing connections first
+# If we have a working connection, we don't need to validate/create a local agent
 check_existing_connections
 
 #==============================================================================
@@ -1696,8 +1705,12 @@ check_existing_connections
 #==============================================================================
 
 if [ "$MY_SOCKS_WORKING" == "false" ]; then
+  # Need to set up a new connection - validate local agent first
+  validate_local_agent
   setup_new_connection
 else
+  # Using existing connection - no need to validate/create local agent
+  # The existing connection already has everything set up
   use_existing_connection
 fi
 
