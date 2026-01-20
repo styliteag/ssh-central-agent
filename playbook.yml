@@ -21,7 +21,9 @@
   vars:
     # Defaults, can be overwriting by creating a localvars.yml file here
     remote_username: change_in_localvars_yml
-    # my_ssh_key ist unsued at the Moment 
+    # my_ssh_key: SSH key file for connecting to SCA system (sca-key, sca-jmp-level*)
+    # Set this in localvars.yml to use a specific key for SCA connections
+    # Example: my_ssh_key: ~/.ssh/id_ed25519
     my_ssh_key: ~/.ssh/id_unused
     ssh_config_file: config
     bindir: /usr/local/bin
