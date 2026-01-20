@@ -760,7 +760,7 @@ execute_command_or_shell() {
       target_host=$(echo "$SSH_ARGS" | awk '{print $1}')
       if [ -n "$target_host" ]; then
         log_debug "SSH config resolution for host '$target_host':"
-        ssh -F "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" -G "$target_host" 2>/dev/null | grep -E "^(identityagent|proxycommand)" | while IFS= read -r line; do
+        ssh -F "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" -G "$target_host" 2>/dev/null | grep -E "^identityagent" | while IFS= read -r line; do
           log_debug "  Config: $line"
         done
         # Resolve the IdentityAgent path from config
@@ -794,7 +794,6 @@ execute_command_or_shell() {
         log_debug "  Agent keys: $line"
       done
     fi
-    # Ensure SSH_AUTH_SOCK is set so ProxyCommand's inner ssh -W also uses the agent
     SSH_AUTH_SOCK="$SSH_SOCKET" eval "$ssh_cmd"
     local ssh_exit_code=$?
     if [ $ssh_exit_code -ne 0 ]; then
@@ -950,7 +949,6 @@ setup_new_connection() {
   log_success "Successfully started a remote agent at $SCA_SSH_AUTH_SOCK"
   
   # Keep temporary agent alive - it will be multiplexed with remote agent
-  # The temporary agent has the local key needed for ProxyCommand authentication
   if [ -n "$TEMP_AGENT_PID" ]; then
     log_info "Keeping temporary SSH agent (will be multiplexed with remote agent)"
     if [ "${DEBUG:-0}" == "1" ]; then
@@ -1156,7 +1154,6 @@ use_existing_connection() {
   patch_jump_aliases
   
   # Keep temporary agent alive - it will be multiplexed with remote agent
-  # The temporary agent has the local key needed for ProxyCommand authentication
   if [ -n "$TEMP_AGENT_PID" ]; then
     log_info "Keeping temporary SSH agent (will be multiplexed with remote agent)"
     if [ "${DEBUG:-0}" == "1" ]; then
