@@ -1173,6 +1173,52 @@ use_existing_connection() {
   # or the level might have changed
   patch_jump_aliases
   
+  # If we're connecting to a host and need a local key for ProxyCommand,
+  # check if we need to create a temporary agent
+  # Only do this if we don't already have a local agent and the mux socket
+  # doesn't already have the local key
+  if [ "$SSH_MODE" == "1" ] && [ -z "$TEMP_AGENT_SOCK" ]; then
+    # Check if we have a local agent (original SSH_AUTH_SOCK or ORG_SSH_AUTH_SOCK)
+    local has_local_agent=false
+    if [ -n "$ORG_SSH_AUTH_SOCK" ] && [ -S "$ORG_SSH_AUTH_SOCK" ] && check_agent_socket "$ORG_SSH_AUTH_SOCK"; then
+      has_local_agent=true
+    elif [ -n "$SSH_AUTH_SOCK" ] && [ -S "$SSH_AUTH_SOCK" ] && check_agent_socket "$SSH_AUTH_SOCK"; then
+      # Check if this is not the remote agent socket
+      if [ "$SSH_AUTH_SOCK" != "$SCA_SSH_AUTH_SOCK" ] && [ "$SSH_AUTH_SOCK" != "$MUX_SSH_AUTH_SOCK" ]; then
+        has_local_agent=true
+      fi
+    fi
+    
+    if [ "$has_local_agent" == "false" ]; then
+      # No local agent - check if mux socket has local key
+      local needs_local_key=true
+      IDENTITY_FILE=$(find_identity_file)
+      if [ -n "$IDENTITY_FILE" ] && [ -S "$MUX_SSH_AUTH_SOCK" ] && check_agent_socket "$MUX_SSH_AUTH_SOCK"; then
+        # Try to get fingerprint of identity file
+        local id_fingerprint
+        id_fingerprint=$(ssh-keygen -lf "$IDENTITY_FILE" 2>/dev/null | awk '{print $2}')
+        if [ -n "$id_fingerprint" ]; then
+          # Check if mux socket has this key
+          if SSH_AUTH_SOCK="$MUX_SSH_AUTH_SOCK" ssh-add -l 2>/dev/null | grep -q "$id_fingerprint"; then
+            needs_local_key=false
+            log_info "Mux socket already has local key, no need to create temporary agent"
+          fi
+        fi
+      fi
+      
+      # If we need a local key and have an identity file, create temporary agent
+      if [ "$needs_local_key" == "true" ] && [ -n "$IDENTITY_FILE" ]; then
+        log_info "Creating temporary SSH agent for local key (needed for ProxyCommand)..."
+        if setup_temp_agent "$IDENTITY_FILE"; then
+          USE_IDENTITY_FILE=true
+          log_info "Temporary SSH agent created for ProxyCommand"
+        else
+          log_warn "Failed to create temporary agent, ProxyCommand may fail"
+        fi
+      fi
+    fi
+  fi
+  
   # Keep temporary agent alive - it will be multiplexed with remote agent
   if [ -n "$TEMP_AGENT_PID" ]; then
     log_info "Keeping temporary SSH agent (will be multiplexed with remote agent)"
@@ -1697,7 +1743,6 @@ SCA_EXITING=false
 trap cleanup EXIT INT TERM
 
 # Check for existing connections first
-# If we have a working connection, we don't need to validate/create a local agent
 check_existing_connections
 
 #==============================================================================
@@ -1709,8 +1754,7 @@ if [ "$MY_SOCKS_WORKING" == "false" ]; then
   validate_local_agent
   setup_new_connection
 else
-  # Using existing connection - no need to validate/create local agent
-  # The existing connection already has everything set up
+  # Using existing connection - use_existing_connection will handle local key if needed
   use_existing_connection
 fi
 
