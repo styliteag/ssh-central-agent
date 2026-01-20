@@ -12,14 +12,14 @@ The Python port maintains the same functionality as the bash version but is orga
 sca/
 ├── __init__.py              # Package initialization
 ├── __main__.py              # Main entry point
-├── cli.py                   # CLI argument parsing (click)
+├── cli.py                   # CLI argument parsing (argparse)
 ├── config.py                # Configuration management
 ├── agent.py                 # SSH agent operations
 ├── multiplexer.py           # Multiplexer setup (Python only)
 ├── connection.py            # Connection management
 ├── process.py               # Process management (cross-platform)
 ├── socket_utils.py          # Socket utilities (Unix + Windows)
-├── logging_utils.py         # Colored logging (colorama)
+├── logging_utils.py         # Colored logging (ANSI codes)
 └── platform_utils.py        # Platform detection and utilities
 ```
 
@@ -31,26 +31,25 @@ sca/
 - Automatic platform detection and appropriate handling
 
 ### Dependencies
-- `click>=8.0.0` - CLI framework
-- `colorama>=0.4.6` - Cross-platform colored output
-- `psutil>=5.9.0` - Cross-platform process management
-- Python 3.9+
+- **None!** Uses only Python 3.9+ standard library
+- No external dependencies required
 
 ### Windows-Specific Notes
 
 1. **SSH Agent**: Windows 11 native OpenSSH uses named pipes instead of Unix sockets
-2. **Process Management**: Uses `psutil` instead of `pgrep`/`pkill`
+2. **Process Management**: Uses `pgrep`/`pkill` on Unix, `os.kill` for process management (standard library)
 3. **Path Handling**: Uses `pathlib.Path` for cross-platform path operations
 4. **Named Pipe Support**: `sshagentmux.py` has been updated to support Windows named pipes (requires `pywin32` for full support)
 5. **Multiplexer**: Only Python multiplexer (`sshagentmux.py`) is supported - Rust mux option has been removed
+6. **CLI**: Uses `argparse` (standard library) instead of `click`
+7. **Logging**: Uses ANSI color codes (standard library) instead of `colorama`
 
 ## Installation
 
 ### From Source
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+# No dependencies needed! Uses only Python 3.9+ standard library
 
 # Install in development mode
 pip install -e .
@@ -59,15 +58,11 @@ pip install -e .
 pip install .
 ```
 
-### Dependencies
+### Optional: Windows Named Pipe Support
 
+For Windows named pipe support in the multiplexer (optional):
 ```bash
-pip install click colorama psutil
-```
-
-For Windows named pipe support in the multiplexer:
-```bash
-pip install pywin32  # Windows only
+pip install pywin32  # Windows only, optional
 ```
 
 ## Usage
@@ -134,8 +129,8 @@ python -m sca --help
 
 - ✅ Core functionality ported
 - ✅ Cross-platform socket support
-- ✅ Process management with psutil
-- ✅ CLI with click
+- ✅ Process management with standard library (os.kill, pgrep/pkill)
+- ✅ CLI with argparse (standard library)
 - ✅ Windows named pipe support (client-side)
 - ⚠️ Windows server support (multiplexer) - partial (needs pywin32)
 - ⚠️ Windows testing - pending

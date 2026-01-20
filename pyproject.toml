@@ -28,11 +28,7 @@ classifiers = [
     "Topic :: Security",
 ]
 
-dependencies = [
-    "click>=8.0.0",
-    "colorama>=0.4.6",
-    "psutil>=5.9.0",
-]
+dependencies = []
 
 [project.optional-dependencies]
 dev = [

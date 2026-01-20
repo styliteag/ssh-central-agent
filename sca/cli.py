@@ -1,15 +1,11 @@
 """
-CLI interface using click library.
+CLI interface using argparse (standard library).
 """
+import argparse
 import os
 import sys
 from pathlib import Path
 from typing import Optional, List
-
-try:
-    import click
-except ImportError:
-    click = None
 
 from .logging_utils import log_error, log_info, log_success
 from .process import kill_all_sca_processes
@@ -106,95 +102,84 @@ def kill_all() -> None:
     sys.exit(0)
 
 
-if click:
-    @click.command(context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
-    @click.option("-h", "--help", "show_help", is_flag=True, help="Show this help message and exit")
-    @click.option("-d", "--debug", is_flag=True, help="Enable debug mode (verbose output)")
-    @click.option("-r", "--reverse", is_flag=True, help="Reverse the order of agents when multiplexing")
-    @click.option("-w", "--wait", is_flag=True, help="Run in background and monitor connection, restart if needed")
-    @click.option("-e", "--env", "shell_mode", is_flag=True, help="Output environment variables in shell format")
-    @click.option("-l", "--level", type=int, help="Set security level (0-3, default: auto-detect)")
-    @click.option("--key", type=click.Choice(["local", "remote", "mux"]), help="Specify which key to use")
-    # Multiplexer type removed - only Python multiplexer is supported
-    @click.option("--list", "list_hosts_flag", is_flag=True, help="List all configured hosts")
-    @click.option("--find", "find_hostname", type=str, help="Find and display information about a specific host")
-    @click.option("--add", "add_hostname", type=str, help="Add a new host to the configuration")
-    @click.option("-s", "--ssh", "ssh_mode", is_flag=True, help="Connect directly via ssh")
-    @click.option("--connect", "connect_mode", is_flag=True, help="Alias for --ssh")
-    @click.option("--kill", "kill_flag", is_flag=True, help="Kill all agents and remote connections")
-    @click.argument("ssh_args", nargs=-1)
-    def cli_main(
-        show_help,
-        debug,
-        reverse,
-        wait,
-        shell_mode,
-        level,
-        key,
-        list_hosts_flag,
-        find_hostname,
-        add_hostname,
-        ssh_mode,
-        connect_mode,
-        kill_flag,
-        ssh_args
-    ):
-        """SCA - SSH Central Agent - Cross-platform SSH agent multiplexing system."""
-        # Handle --help
-        if show_help:
-            click.echo(click.get_current_context().get_help(), err=True)
-            sys.exit(0)
-        
-        # Set DEBUG environment variable
-        if debug:
-            os.environ["DEBUG"] = "1"
-        
-        # Handle --kill
-        if kill_flag:
-            kill_all()
-        
-        # Handle --list
-        if list_hosts_flag:
-            playbook_dir = os.environ.get("PLAYBOOK_DIR", ".")
-            list_hosts(playbook_dir)
-            sys.exit(0)
-        
-        # Handle --find
-        if find_hostname:
-            playbook_dir = os.environ.get("PLAYBOOK_DIR", ".")
-            find_host(playbook_dir, find_hostname)
-            sys.exit(0)
-        
-        # Handle --add
-        if add_hostname:
-            playbook_dir = os.environ.get("PLAYBOOK_DIR", ".")
-            add_host(playbook_dir, add_hostname)
-            sys.exit(0)
-        
-        # Store options in environment for main logic to use
-        if reverse:
-            os.environ["REVERSE"] = "1"
-        if wait:
-            os.environ["WAIT"] = "1"
-        if shell_mode:
-            os.environ["SHELL_MODE"] = "1"
-        if level is not None:
-            os.environ["LEVEL"] = str(level)
-        if key:
-            os.environ["KEY"] = key
-        # Always use Python multiplexer
-        os.environ["MUX_TYPE"] = "python"
-        if ssh_mode or connect_mode or ssh_args:
-            os.environ["SSH_MODE"] = "1"
-            if ssh_args:
-                os.environ["SSH_ARGS"] = " ".join(ssh_args)
-        
-        # Return None to continue to main logic
-        return None
-
-else:
-    # Fallback if click is not available
-    def cli_main(*args, **kwargs):
-        log_error("click library is required but not installed")
-        log_info("Install it with: pip install click")
-        sys.exit(1)
+def cli_main() -> Optional[None]:
+    """
+    Parse CLI arguments using argparse.
+    
+    Returns:
+        None if command was handled (should exit), or None to continue to main logic
+    """
+    parser = argparse.ArgumentParser(
+        description="SCA - SSH Central Agent - Cross-platform SSH agent multiplexing system",
+        allow_abbrev=False,
+        add_help=False  # We'll handle -h/--help manually
+    )
+    
+    parser.add_argument("-h", "--help", action="store_true", help="Show this help message and exit")
+    parser.add_argument("-d", "--debug", action="store_true", help="Enable debug mode (verbose output)")
+    parser.add_argument("-r", "--reverse", action="store_true", help="Reverse the order of agents when multiplexing")
+    parser.add_argument("-w", "--wait", action="store_true", help="Run in background and monitor connection, restart if needed")
+    parser.add_argument("-e", "--env", dest="shell_mode", action="store_true", help="Output environment variables in shell format")
+    parser.add_argument("-l", "--level", type=int, help="Set security level (0-3, default: auto-detect)")
+    parser.add_argument("--key", choices=["local", "remote", "mux"], help="Specify which key to use")
+    parser.add_argument("--list", dest="list_hosts_flag", action="store_true", help="List all configured hosts")
+    parser.add_argument("--find", dest="find_hostname", type=str, help="Find and display information about a specific host")
+    parser.add_argument("--add", dest="add_hostname", type=str, help="Add a new host to the configuration")
+    parser.add_argument("-s", "--ssh", dest="ssh_mode", action="store_true", help="Connect directly via ssh")
+    parser.add_argument("--connect", dest="connect_mode", action="store_true", help="Alias for --ssh")
+    parser.add_argument("--kill", dest="kill_flag", action="store_true", help="Kill all agents and remote connections")
+    
+    # Parse known args, leaving unknown args for SSH
+    args, ssh_args = parser.parse_known_args()
+    
+    # Handle --help
+    if args.help:
+        parser.print_help(file=sys.stderr)
+        sys.exit(0)
+    
+    # Set DEBUG environment variable
+    if args.debug:
+        os.environ["DEBUG"] = "1"
+    
+    # Handle --kill
+    if args.kill_flag:
+        kill_all()
+    
+    # Handle --list
+    if args.list_hosts_flag:
+        playbook_dir = os.environ.get("PLAYBOOK_DIR", ".")
+        list_hosts(playbook_dir)
+        sys.exit(0)
+    
+    # Handle --find
+    if args.find_hostname:
+        playbook_dir = os.environ.get("PLAYBOOK_DIR", ".")
+        find_host(playbook_dir, args.find_hostname)
+        sys.exit(0)
+    
+    # Handle --add
+    if args.add_hostname:
+        playbook_dir = os.environ.get("PLAYBOOK_DIR", ".")
+        add_host(playbook_dir, args.add_hostname)
+        sys.exit(0)
+    
+    # Store options in environment for main logic to use
+    if args.reverse:
+        os.environ["REVERSE"] = "1"
+    if args.wait:
+        os.environ["WAIT"] = "1"
+    if args.shell_mode:
+        os.environ["SHELL_MODE"] = "1"
+    if args.level is not None:
+        os.environ["LEVEL"] = str(args.level)
+    if args.key:
+        os.environ["KEY"] = args.key
+    # Always use Python multiplexer
+    os.environ["MUX_TYPE"] = "python"
+    if args.ssh_mode or args.connect_mode or ssh_args:
+        os.environ["SSH_MODE"] = "1"
+        if ssh_args:
+            os.environ["SSH_ARGS"] = " ".join(ssh_args)
+    
+    # Return None to continue to main logic
+    return None

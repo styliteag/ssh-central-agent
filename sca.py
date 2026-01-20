@@ -45,4 +45,7 @@ except OSError as e:
 if __name__ == "__main__":
     # Use -m to run as module, which will handle imports correctly
     import subprocess
-    sys.exit(subprocess.run([sys.executable, "-m", "sca"] + sys.argv[1:]).returncode)
+    try:
+        sys.exit(subprocess.run([sys.executable, "-m", "sca"] + sys.argv[1:]).returncode)
+    except KeyboardInterrupt:
+        sys.exit(130)

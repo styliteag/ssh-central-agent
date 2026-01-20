@@ -228,15 +228,24 @@ def execute_command_or_shell(
     elif wait_mode:
         # Wait Mode: Monitor connection and restart if needed
         log_info(f"WAIT in a Loop and check every {CHECK_SECONDS} if the Connection is dead")
+        
+        # Expand socket paths before checking
+        from .platform_utils import expand_path
+        expanded_mux_sock = str(expand_path(mux_ssh_auth_sock))
+        expanded_sca_sock = str(expand_path(ssh_auth_sock))
+        
+        # Give sockets a moment to stabilize before first check
+        time.sleep(2)
+        
         while True:
             if sca_exiting:
                 log_info("Exiting...")
                 break
             
-            # Check the appropriate socket
-            socket_to_check = mux_ssh_auth_sock
-            if not verify_socket_working(mux_ssh_auth_sock) or mux_ssh_auth_sock == os.environ.get("SCA_SSH_AUTH_SOCK", ""):
-                socket_to_check = os.environ.get("SCA_SSH_AUTH_SOCK", "")
+            # Check the appropriate socket (prefer mux, fallback to remote agent)
+            socket_to_check = expanded_mux_sock
+            if not verify_socket_working(expanded_mux_sock):
+                socket_to_check = expanded_sca_sock
             
             if not verify_socket_working(socket_to_check):
                 if sca_exiting:
@@ -694,21 +703,14 @@ def main():
         log_error("Example: export RUSERNAME=wb")
         sys.exit(1)
     
-    # Parse CLI arguments (if click is available)
-    if cli and hasattr(cli, 'click') and cli.click:
-        try:
-            cli.cli_main(standalone_mode=False)
-        except SystemExit:
-            # CLI handled the command (--list, --find, --add, --kill)
-            return
-    elif cli and hasattr(cli, 'cli_main'):
-        # Fallback: try to use CLI even without click
+    # Parse CLI arguments using argparse
+    if cli and hasattr(cli, 'cli_main'):
         try:
             result = cli.cli_main()
-            if result is None:
-                # CLI handled it, exit
-                return
+            # cli_main() returns None to continue, or raises SystemExit if handled
+            # If it returns, we continue to main logic
         except SystemExit:
+            # CLI handled the command (--list, --find, --add, --kill, --help)
             return
     
     # Get options from environment (set by CLI)
