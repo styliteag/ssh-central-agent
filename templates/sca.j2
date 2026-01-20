@@ -40,6 +40,9 @@ export MUX_SSH_AUTH_SOCK={{ mux_auth_sock }}
 export PLAYBOOK_DIR={{ playbook_dir }}
 export SSH_CONFIG_FILE={{ ssh_config_file }}
 export SCA_SCRIPT="$0"
+{% if my_ssh_key is defined and my_ssh_key != '~/.ssh/id_unused' %}
+export MY_SSH_KEY={{ my_ssh_key }}
+{% endif %}
 
 # Include helper functions
 source "$PLAYBOOK_DIR/functions.sh"

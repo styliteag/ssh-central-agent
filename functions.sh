@@ -460,19 +460,13 @@ show_harmless_error_note() {
 find_identity_file() {
     local key_file
     
-    # First, check if my_ssh_key is set in the SSH config (from localvars.yml)
-    # Look for IdentityFile in the sca-key host section
-    if [ -f "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" ]; then
-        local config_key
-        # Extract IdentityFile from sca-key host section (between "Host sca-key" and next "Host" or end of file)
-        config_key=$(awk '/^Host[[:space:]]+sca-key/,/^Host[[:space:]]+|^$/{if(/^[[:space:]]*IdentityFile[[:space:]]+/ && !/^[[:space:]]*#/){print $2; exit}}' "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" 2>/dev/null)
-        if [ -n "$config_key" ]; then
-            # Expand ~ to $HOME
-            config_key=$(echo "$config_key" | sed "s|^~|$HOME|")
-            if [ "$config_key" != "$HOME/.ssh/id_unused" ] && [ -f "$config_key" ] && [ -r "$config_key" ]; then
-                echo "$config_key"
-                return 0
-            fi
+    # First, check if MY_SSH_KEY is set (from localvars.yml via playbook)
+    if [ -n "$MY_SSH_KEY" ] && [ "$MY_SSH_KEY" != "~/.ssh/id_unused" ]; then
+        # Expand ~ to $HOME if needed
+        key_file=$(echo "$MY_SSH_KEY" | sed "s|^~|$HOME|")
+        if [ -f "$key_file" ] && [ -r "$key_file" ]; then
+            echo "$key_file"
+            return 0
         fi
     fi
 
