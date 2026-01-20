@@ -465,14 +465,28 @@ def use_existing_connection(
         my_level = level
     
     # Setup multiplexer if needed
-    if temp_agent_sock and verify_socket_working(temp_agent_sock) and verify_socket_working(sca_ssh_auth_sock):
+    # We need mux if we have both a local agent (temp or regular) and remote agent
+    local_agent_sock = None
+    if temp_agent_sock and verify_socket_working(temp_agent_sock):
+        local_agent_sock = temp_agent_sock
+    elif has_local_agent:
+        # Use the existing local agent
+        if org_ssh_auth_sock and verify_socket_working(org_ssh_auth_sock):
+            local_agent_sock = org_ssh_auth_sock
+        elif os.environ.get("SSH_AUTH_SOCK") and verify_socket_working(os.environ["SSH_AUTH_SOCK"]):
+            current_sock = os.environ["SSH_AUTH_SOCK"]
+            if current_sock != sca_ssh_auth_sock and current_sock != mux_ssh_auth_sock:
+                local_agent_sock = current_sock
+    
+    if local_agent_sock and verify_socket_working(sca_ssh_auth_sock):
         needs_mux_setup = True
         if verify_socket_working(mux_ssh_auth_sock):
-            temp_key_fingerprint = None
+            # Check if mux already has the keys we need
+            local_key_fingerprint = None
             try:
                 result = subprocess.run(
                     ["ssh-add", "-l"],
-                    env={"SSH_AUTH_SOCK": temp_agent_sock, **os.environ},
+                    env={"SSH_AUTH_SOCK": local_agent_sock, **os.environ},
                     capture_output=True,
                     text=True,
                     timeout=5
@@ -480,16 +494,17 @@ def use_existing_connection(
                 if result.returncode == 0 and result.stdout:
                     parts = result.stdout.splitlines()[0].split()
                     if len(parts) >= 2:
-                        temp_key_fingerprint = parts[1]
+                        local_key_fingerprint = parts[1]
             except Exception:
                 pass
             
-            if temp_key_fingerprint and check_key_in_agent(mux_ssh_auth_sock, temp_key_fingerprint):
+            if local_key_fingerprint and check_key_in_agent(mux_ssh_auth_sock, local_key_fingerprint):
                 needs_mux_setup = False
+                log_info("Mux socket already has local keys, skipping setup")
         
         if needs_mux_setup:
-            log_info("Setting up multiplexer for temporary agent + remote agent")
-            org_sock_for_mux = temp_agent_sock
+            log_info("Setting up multiplexer for local agent + remote agent")
+            org_sock_for_mux = local_agent_sock
             
             try:
                 mux_result = setup_python_multiplexer(
