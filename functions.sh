@@ -1161,23 +1161,10 @@ check_existing_connections() {
 
 # Use existing connection
 use_existing_connection() {
-  # Still need to determine level for environment variables
-  MY_LEVEL=$(determine_security_level)
-  if [ $? -ne 0 ]; then
-    log_error "Failed to determine security level for existing connection"
-    exit 1
-  fi
-  
-  # Ensure SSH config is patched with jump aliases for this level
-  # This is needed because Ansible might have regenerated the config,
-  # or the level might have changed
-  patch_jump_aliases
-  
-  # If we're connecting to a host and need a local key for ProxyCommand,
-  # check if we need to create a temporary agent
-  # Only do this if we don't already have a local agent and the mux socket
-  # doesn't already have the local key
-  if [ "$SSH_MODE" == "1" ] && [ -z "$TEMP_AGENT_SOCK" ]; then
+  # If we need a local key (for determine_security_level or ProxyCommand),
+  # check if we need to create a temporary agent BEFORE calling determine_security_level
+  # This avoids prompting for passphrase twice
+  if [ -z "$TEMP_AGENT_SOCK" ]; then
     # Check if we have a local agent (original SSH_AUTH_SOCK or ORG_SSH_AUTH_SOCK)
     local has_local_agent=false
     if [ -n "$ORG_SSH_AUTH_SOCK" ] && [ -S "$ORG_SSH_AUTH_SOCK" ] && check_agent_socket "$ORG_SSH_AUTH_SOCK"; then
@@ -1207,17 +1194,30 @@ use_existing_connection() {
       fi
       
       # If we need a local key and have an identity file, create temporary agent
+      # This is needed for determine_security_level() and potentially for ProxyCommand
       if [ "$needs_local_key" == "true" ] && [ -n "$IDENTITY_FILE" ]; then
-        log_info "Creating temporary SSH agent for local key (needed for ProxyCommand)..."
+        log_info "Creating temporary SSH agent for local key (needed for connection)..."
         if setup_temp_agent "$IDENTITY_FILE"; then
           USE_IDENTITY_FILE=true
-          log_info "Temporary SSH agent created for ProxyCommand"
+          log_info "Temporary SSH agent created"
         else
-          log_warn "Failed to create temporary agent, ProxyCommand may fail"
+          log_warn "Failed to create temporary agent, connection may fail"
         fi
       fi
     fi
   fi
+  
+  # Now determine level (will use temp agent if we just created one)
+  MY_LEVEL=$(determine_security_level)
+  if [ $? -ne 0 ]; then
+    log_error "Failed to determine security level for existing connection"
+    exit 1
+  fi
+  
+  # Ensure SSH config is patched with jump aliases for this level
+  # This is needed because Ansible might have regenerated the config,
+  # or the level might have changed
+  patch_jump_aliases
   
   # Keep temporary agent alive - it will be multiplexed with remote agent
   if [ -n "$TEMP_AGENT_PID" ]; then
