@@ -581,10 +581,39 @@ build_ssh_cmd() {
 determine_security_level() {
     local ssh_cmd ssh_output ssh_exit_code my_level
     
-    # Always use build_ssh_cmd which will use temp agent if available,
-    # otherwise fall back to identity file or remote agent
-    ssh_cmd=$(build_ssh_cmd)
-    log_debug "Determining security level with: $ssh_cmd"
+    # If we have a mux socket with the local key, use it directly
+    # Otherwise, use build_ssh_cmd which will use temp agent or identity file
+    if [ -S "$MUX_SSH_AUTH_SOCK" ] && check_agent_socket "$MUX_SSH_AUTH_SOCK"; then
+        # Check if mux socket has the local key (needed for sca-key connection)
+        IDENTITY_FILE=$(find_identity_file)
+        if [ -n "$IDENTITY_FILE" ]; then
+            local id_fingerprint
+            id_fingerprint=$(ssh-keygen -lf "$IDENTITY_FILE" 2>/dev/null | awk '{print $2}')
+            if [ -n "$id_fingerprint" ]; then
+                if SSH_AUTH_SOCK="$MUX_SSH_AUTH_SOCK" ssh-add -l 2>/dev/null | grep -q "$id_fingerprint"; then
+                    # Mux socket has the local key, use it
+                    ssh_cmd="ssh -a -F $PLAYBOOK_DIR/$SSH_CONFIG_FILE -o IdentityAgent=$MUX_SSH_AUTH_SOCK"
+                    log_debug "Determining security level with mux socket: $ssh_cmd"
+                else
+                    # Mux socket doesn't have local key, use build_ssh_cmd
+                    ssh_cmd=$(build_ssh_cmd)
+                    log_debug "Determining security level with: $ssh_cmd"
+                fi
+            else
+                # Can't get fingerprint, use build_ssh_cmd
+                ssh_cmd=$(build_ssh_cmd)
+                log_debug "Determining security level with: $ssh_cmd"
+            fi
+        else
+            # No identity file, use build_ssh_cmd
+            ssh_cmd=$(build_ssh_cmd)
+            log_debug "Determining security level with: $ssh_cmd"
+        fi
+    else
+        # No mux socket, use build_ssh_cmd
+        ssh_cmd=$(build_ssh_cmd)
+        log_debug "Determining security level with: $ssh_cmd"
+    fi
     
     ssh_output=$(eval "$ssh_cmd -o \"SetEnv SCA_NOLEVEL=1\" sca-key groups 2>&1")
     ssh_exit_code=$?
