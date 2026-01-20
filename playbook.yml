@@ -41,11 +41,13 @@
       src: sca.j2
       dest: "./{{ command_sca }}.bash"
       mode: u=rwx,g=rx,o=rx
-  - name: Create Local sca (Python version)
+  - name: Create Local sca (Python shim)
     template:
-      src: sca_python.j2
-      dest: "./{{ command_sca }}"
+      src: sca_shim.j2
+      dest: "./{{ command_sca }}.py"
       mode: u=rwx,g=rx,o=rx
+    # Note: We create it as .py to avoid conflict with sca/ directory
+    # The symlink below will point to this file
   - name: Update .zshrc
     ignore_errors: true
     blockinfile:
@@ -97,7 +99,7 @@
   - name: Place our command in the Path as "sca"
     become: "{{ bindir_become }}"
     file:
-      src: "{{ playbook_dir }}/sca"
+      src: "{{ playbook_dir }}/{{ command_sca }}.py"
       dest: "{{ bindir }}/{{ command_sca }}"
       state: link
       force: yes

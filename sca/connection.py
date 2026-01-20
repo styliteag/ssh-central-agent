@@ -172,15 +172,43 @@ def start_remote_agent(
     expanded_socket = str(expand_path(sca_ssh_auth_sock))
     log_debug(f"Expanded socket path: {sca_ssh_auth_sock} -> {expanded_socket}")
     
+    # Remove stale socket file if it exists (SSH -L will fail if socket exists and is not in use)
+    socket_path = Path(expanded_socket)
+    if socket_path.exists():
+        try:
+            # Check if socket is actually working (has a process attached)
+            if verify_socket_working(expanded_socket):
+                # Socket is working - this shouldn't happen if check_existing_connections worked
+                # But if it does, we should not try to create a new one
+                log_warn(f"Socket already exists and is working: {expanded_socket}")
+                log_warn("This indicates a race condition - socket was created between checks")
+                # This is a race condition - socket exists but we're trying to create it
+                # Best to remove it and start fresh
+                log_warn("Socket exists but we're starting new connection - removing stale socket")
+                socket_path.unlink()
+            else:
+                # Stale socket - remove it so SSH can create a new one
+                log_debug(f"Removing stale socket before starting: {expanded_socket}")
+                socket_path.unlink()
+        except OSError as e:
+            log_debug(f"Error checking socket: {e}, attempting to remove anyway")
+            try:
+                if socket_path.is_socket():
+                    socket_path.unlink()
+            except Exception:
+                pass
+    
     # Validate rusername
     if not rusername:
         log_error("Remote username (rusername) is required but not set")
         raise RuntimeError("Remote username is required")
     
     # Build the SSH command with port forwarding
+    # Note: We don't use -tt here because this is a background process that doesn't need a TTY
+    # Using -tt would try to allocate a TTY which can interfere with the interactive SSH session
     remote_socket = f"/home/{rusername}/yubikey-agent.sock"
     ssh_cmd_list.extend([
-        "-tt", "-a",
+        "-a",  # Disable agent forwarding (we're forwarding the socket via -L instead)
         "-L", f"{expanded_socket}:{remote_socket}",
         "-o", f"SetEnv SCA_LEVEL={level}",
         "sca-key", "ragent",
@@ -201,12 +229,14 @@ def start_remote_agent(
     
     try:
         log_debug(f"SSH command: {' '.join(ssh_cmd_list)}")
+        # Fully detach from terminal: new session, no stdin/stdout/stderr attached
         process = subprocess.Popen(
             ssh_cmd_list,
-            stdout=subprocess.DEVNULL,
-            stderr=open(ssh_stderr_file.name, 'w'),
+            stdin=subprocess.DEVNULL,  # Detach stdin from terminal
+            stdout=subprocess.DEVNULL,  # Detach stdout from terminal
+            stderr=open(ssh_stderr_file.name, 'w'),  # Log to file only
             env=env,
-            start_new_session=True  # Detach from parent
+            start_new_session=True  # Create new session (fully detached)
         )
         ssh_pid = process.pid
         log_success(f"SSH agent forwarder is running as PID {ssh_pid}")
@@ -305,16 +335,22 @@ def check_existing_connections(
         log_info("Cleaning up stale connections")
         kill_all_sca_processes()
         log_info("Removing stale socket files")
+        # Expand paths before checking/removing
+        sca_sock_path = Path(expand_path(sca_ssh_auth_sock))
+        mux_sock_path = Path(expand_path(mux_ssh_auth_sock))
+        
         try:
-            if Path(sca_ssh_auth_sock).exists():
-                Path(sca_ssh_auth_sock).unlink()
-        except OSError:
-            pass
+            if sca_sock_path.exists():
+                log_debug(f"Removing stale socket: {sca_sock_path}")
+                sca_sock_path.unlink()
+        except OSError as e:
+            log_debug(f"Error removing socket {sca_sock_path}: {e}")
         try:
-            if Path(mux_ssh_auth_sock).exists():
-                Path(mux_ssh_auth_sock).unlink()
-        except OSError:
-            pass
+            if mux_sock_path.exists():
+                log_debug(f"Removing stale socket: {mux_sock_path}")
+                mux_sock_path.unlink()
+        except OSError as e:
+            log_debug(f"Error removing socket {mux_sock_path}: {e}")
         working = False
     elif not mux_sock and mux_socket_path.exists():
         # Mux socket exists but not working - restart multiplexer

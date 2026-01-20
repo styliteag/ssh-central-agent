@@ -89,19 +89,24 @@ def execute_command_or_shell(
     
     elif ssh_mode:
         # SSH Mode: Direct SSH connection
+        # Expand paths before checking (needed for fallback logic)
+        from .platform_utils import expand_path
+        expanded_mux_sock = str(expand_path(mux_ssh_auth_sock))
+        expanded_ssh_auth_sock = str(expand_path(ssh_auth_sock))
+        
         # Select socket based on --key option
         if key == "mux":
-            ssh_socket = mux_ssh_auth_sock
+            ssh_socket = expanded_mux_sock
         elif key == "local":
             ssh_socket = org_ssh_auth_sock
         else:
             # Default to mux, but fall back to remote agent if mux doesn't work
-            if verify_socket_working(mux_ssh_auth_sock):
-                ssh_socket = mux_ssh_auth_sock
-            elif verify_socket_working(ssh_auth_sock):
-                ssh_socket = ssh_auth_sock
+            if verify_socket_working(expanded_mux_sock):
+                ssh_socket = expanded_mux_sock
+            elif verify_socket_working(expanded_ssh_auth_sock):
+                ssh_socket = expanded_ssh_auth_sock
             else:
-                ssh_socket = mux_ssh_auth_sock  # Will fail below with better error
+                ssh_socket = expanded_mux_sock  # Will fail below with better error
         
         # Resolve symlink if needed
         resolved_socket = resolve_socket_path(ssh_socket)
@@ -109,9 +114,9 @@ def execute_command_or_shell(
         # Verify socket
         if not verify_socket_working(resolved_socket):
             # Try fallback to remote agent if mux failed
-            if ssh_socket == mux_ssh_auth_sock and verify_socket_working(ssh_auth_sock):
-                resolved_socket = resolve_socket_path(ssh_auth_sock)
-                ssh_socket = ssh_auth_sock
+            if ssh_socket == expanded_mux_sock and verify_socket_working(expanded_ssh_auth_sock):
+                resolved_socket = resolve_socket_path(expanded_ssh_auth_sock)
+                ssh_socket = expanded_ssh_auth_sock
                 log_info(f"Multiplexer socket not available, using remote agent: {resolved_socket}")
             else:
                 log_error(f"Socket is not working: {resolved_socket}")
@@ -176,30 +181,39 @@ def execute_command_or_shell(
         env = os.environ.copy()
         env["SSH_AUTH_SOCK"] = expanded_socket
         
-        # Debug: verify environment variable is set and test socket
+        # Debug: Only log the environment variable, don't test the agent (blocking)
         if os.environ.get("DEBUG") == "1":
             log_debug(f"Environment SSH_AUTH_SOCK={env.get('SSH_AUTH_SOCK')}")
-            # Test that SSH can see the agent
-            test_result = subprocess.run(
-                ["ssh-add", "-l"],
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if test_result.returncode == 0:
-                log_debug(f"Agent accessible: {test_result.stdout.strip()}")
-            else:
-                log_debug(f"Agent test failed: {test_result.stderr}")
         
+        # Flush all output before handing control to SSH
+        # This ensures no buffered output interferes with SSH's terminal control
+        sys.stderr.flush()
+        sys.stdout.flush()
+        
+        # Close any file descriptors that might interfere (except stdin/stdout/stderr)
+        # This ensures SSH gets a clean terminal
         try:
-            result = subprocess.run(
-                ssh_cmd,
-                env=env
-            )
-            exit_code = result.returncode
-        except KeyboardInterrupt:
-            exit_code = 130
+            import resource
+            maxfd = resource.getrlimit(resource.RLIMIT_NOFILE)[1]
+            if maxfd == resource.RLIM_INFINITY:
+                maxfd = 1024
+            for fd in range(3, maxfd):
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        except Exception:
+            pass  # Ignore errors closing file descriptors
+        
+        # Use os.execvpe to completely replace this process with SSH
+        # This gives SSH full terminal control without any Python wrapper interference
+        try:
+            os.execvpe(ssh_cmd[0], ssh_cmd, env)
+            # execvpe never returns on success, so this should never be reached
+            exit_code = 1
+        except FileNotFoundError:
+            log_error(f"SSH command not found: {ssh_cmd[0]}")
+            exit_code = 1
         except Exception as e:
             log_error(f"SSH command failed: {e}")
             exit_code = 1
@@ -271,11 +285,16 @@ def setup_new_connection(
     
     log_info("No working agent found: Starting new connection")
     
-    # Remove old sockets
+    # Remove old sockets (expand paths first)
+    from .platform_utils import expand_path
     for sock in [sca_ssh_auth_sock, mux_ssh_auth_sock]:
-        sock_path = Path(sock)
+        sock_path = Path(expand_path(sock))
         if sock_path.exists():
-            sock_path.unlink()
+            try:
+                log_debug(f"Removing old socket: {sock_path}")
+                sock_path.unlink()
+            except OSError as e:
+                log_debug(f"Error removing socket {sock_path}: {e}")
     
     # Determine security level
     try:
@@ -338,7 +357,11 @@ def setup_new_connection(
     omux_pid = None
     skip_symlink = False
     
-    if verify_socket_working(sca_ssh_auth_sock):
+    # Expand socket path before checking
+    from .platform_utils import expand_path
+    expanded_sca_sock = str(expand_path(sca_ssh_auth_sock))
+    
+    if verify_socket_working(expanded_sca_sock):
         log_info("Muxing the agents to one")
         
         # Use local agent or dummy path
@@ -347,7 +370,7 @@ def setup_new_connection(
         try:
             mux_result = setup_python_multiplexer(
                 playbook_dir,
-                sca_ssh_auth_sock,
+                expanded_sca_sock,
                 org_sock_for_mux,
                 reverse=reverse
             )
@@ -366,21 +389,40 @@ def setup_new_connection(
             target_expanded = expand_path(mux_ssh_auth_sock)
             if omux_expanded != target_expanded:
                 try:
-                    if Path(mux_ssh_auth_sock).exists():
-                        Path(mux_ssh_auth_sock).unlink()
-                    Path(mux_ssh_auth_sock).symlink_to(omux_socket)
+                    target_path = Path(target_expanded)
+                    # Check if symlink already exists and points to the right target
+                    if target_path.is_symlink():
+                        current_target = target_path.readlink()
+                        if str(current_target) == omux_socket:
+                            log_debug(f"Symlink already exists and is correct: {target_expanded} -> {omux_socket}")
+                        else:
+                            target_path.unlink()
+                            target_path.symlink_to(omux_socket)
+                            log_debug(f"Updated symlink: {target_expanded} -> {omux_socket}")
+                    elif target_path.exists():
+                        # Regular file exists, remove it
+                        target_path.unlink()
+                        target_path.symlink_to(omux_socket)
+                        log_debug(f"Replaced file with symlink: {target_expanded} -> {omux_socket}")
+                    else:
+                        # Ensure parent directory exists
+                        target_path.parent.mkdir(parents=True, exist_ok=True)
+                        target_path.symlink_to(omux_socket)
+                        log_debug(f"Created symlink: {target_expanded} -> {omux_socket}")
                 except OSError as e:
                     log_debug(f"Could not create symlink: {e}")
         
         os.environ["ORG_MUX_SSH_AUTH_SOCK"] = omux_socket
-        os.environ["SSH_AUTH_SOCK"] = mux_ssh_auth_sock
+        # Use expanded path for environment variable
+        expanded_mux_sock = str(expand_path(mux_ssh_auth_sock))
+        os.environ["SSH_AUTH_SOCK"] = expanded_mux_sock
         
-        log_info(f"Verifying with: 'SSH_AUTH_SOCK={mux_ssh_auth_sock} ssh-add -l'")
+        log_info(f"Verifying with: 'SSH_AUTH_SOCK={expanded_mux_sock} ssh-add -l'")
         log_success("You can now use this key (even not in this SUBSHELL, thanks to .ssh/config magic)")
         try:
             result = subprocess.run(
                 ["ssh-add", "-l"],
-                env={"SSH_AUTH_SOCK": mux_ssh_auth_sock, **os.environ},
+                env={"SSH_AUTH_SOCK": expanded_mux_sock, **os.environ},
                 capture_output=True,
                 text=True,
                 timeout=5
@@ -390,7 +432,8 @@ def setup_new_connection(
         except Exception:
             pass
     else:
-        log_error("Remote agent socket not available")
+        log_error(f"Remote agent socket not available: {expanded_sca_sock}")
+        log_debug(f"Socket exists: {Path(expanded_sca_sock).exists()}")
         sys.exit(1)
     
     return {
@@ -478,9 +521,13 @@ def use_existing_connection(
             if current_sock != sca_ssh_auth_sock and current_sock != mux_ssh_auth_sock:
                 local_agent_sock = current_sock
     
-    if local_agent_sock and verify_socket_working(sca_ssh_auth_sock):
+    # Expand socket paths before checking
+    expanded_sca_sock = str(expand_path(sca_ssh_auth_sock))
+    
+    if local_agent_sock and verify_socket_working(expanded_sca_sock):
         needs_mux_setup = True
-        if verify_socket_working(mux_ssh_auth_sock):
+        expanded_mux_sock_check = str(expand_path(mux_ssh_auth_sock))
+        if verify_socket_working(expanded_mux_sock_check):
             # Check if mux already has the keys we need
             local_key_fingerprint = None
             try:
@@ -498,7 +545,7 @@ def use_existing_connection(
             except Exception:
                 pass
             
-            if local_key_fingerprint and check_key_in_agent(mux_ssh_auth_sock, local_key_fingerprint):
+            if local_key_fingerprint and check_key_in_agent(expanded_mux_sock_check, local_key_fingerprint):
                 needs_mux_setup = False
                 log_info("Mux socket already has local keys, skipping setup")
         
@@ -509,7 +556,7 @@ def use_existing_connection(
             try:
                 mux_result = setup_python_multiplexer(
                     playbook_dir,
-                    sca_ssh_auth_sock,
+                    expanded_sca_sock,
                     org_sock_for_mux,
                     reverse=reverse
                 )
@@ -527,25 +574,50 @@ def use_existing_connection(
                 target_expanded = expand_path(mux_ssh_auth_sock)
                 if omux_expanded != target_expanded:
                     try:
-                        if Path(mux_ssh_auth_sock).exists():
-                            Path(mux_ssh_auth_sock).unlink()
-                        Path(mux_ssh_auth_sock).symlink_to(omux_socket)
-                    except OSError:
-                        pass
+                        target_path = Path(target_expanded)
+                        # Check if symlink already exists and points to the right target
+                        if target_path.is_symlink():
+                            current_target = target_path.readlink()
+                            if str(current_target) == omux_socket:
+                                log_debug(f"Symlink already exists and is correct: {target_expanded} -> {omux_socket}")
+                            else:
+                                target_path.unlink()
+                                target_path.symlink_to(omux_socket)
+                                log_debug(f"Updated symlink: {target_expanded} -> {omux_socket}")
+                        elif target_path.exists():
+                            # Regular file exists, remove it
+                            target_path.unlink()
+                            target_path.symlink_to(omux_socket)
+                            log_debug(f"Replaced file with symlink: {target_expanded} -> {omux_socket}")
+                        else:
+                            # Ensure parent directory exists
+                            target_path.parent.mkdir(parents=True, exist_ok=True)
+                            target_path.symlink_to(omux_socket)
+                            log_debug(f"Created symlink: {target_expanded} -> {omux_socket}")
+                    except OSError as e:
+                        log_debug(f"Could not create symlink: {e}")
             
             os.environ["ORG_MUX_SSH_AUTH_SOCK"] = omux_socket
-            os.environ["SSH_AUTH_SOCK"] = mux_ssh_auth_sock
+            # Use expanded path for environment variable
+            expanded_mux_sock = str(expand_path(mux_ssh_auth_sock))
+            os.environ["SSH_AUTH_SOCK"] = expanded_mux_sock
     
     # Use the multiplexed socket if available, otherwise use remote agent
-    if verify_socket_working(mux_ssh_auth_sock):
-        log_info(f"Using working multiplexed SSH_AUTH_SOCK={mux_ssh_auth_sock}")
-        final_sock = mux_ssh_auth_sock
-    elif verify_socket_working(sca_ssh_auth_sock):
-        log_info(f"Using working remote SSH_AUTH_SOCK={sca_ssh_auth_sock}")
-        final_sock = sca_ssh_auth_sock
-        os.environ["MUX_SSH_AUTH_SOCK"] = sca_ssh_auth_sock
+    # Expand paths before checking
+    expanded_mux_sock = str(expand_path(mux_ssh_auth_sock))
+    expanded_sca_sock = str(expand_path(sca_ssh_auth_sock))
+    
+    if verify_socket_working(expanded_mux_sock):
+        log_info(f"Using working multiplexed SSH_AUTH_SOCK={expanded_mux_sock}")
+        final_sock = expanded_mux_sock
+    elif verify_socket_working(expanded_sca_sock):
+        log_info(f"Using working remote SSH_AUTH_SOCK={expanded_sca_sock}")
+        final_sock = expanded_sca_sock
+        os.environ["MUX_SSH_AUTH_SOCK"] = expanded_sca_sock
     else:
         log_error("No working agent socket found")
+        log_debug(f"Mux socket: {expanded_mux_sock} (exists: {Path(expanded_mux_sock).exists()})")
+        log_debug(f"Remote socket: {expanded_sca_sock} (exists: {Path(expanded_sca_sock).exists()})")
         sys.exit(1)
     
     os.environ["SSH_AUTH_SOCK"] = final_sock
