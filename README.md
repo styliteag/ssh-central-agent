@@ -74,9 +74,12 @@ ssh-keygen -t ed25519 -C your_email@example.com -f ~/.ssh/id_ed25519 -N yourpass
 
 # Or with YubiKey
 ssh-keygen -t ecdsa-sk -O no-touch-required -C "your_email@example.com (notouch+passphrase)" -f ~/.ssh/id_your_sk
+
+# Recommended: Create a dedicated key for SCA connections
+ssh-keygen -t ed25519 -C "sca-connection" -f ~/.ssh/id_ed25519_sca -N yourpassword
 ```
 
-2. **Ensure your SSH agent is running**:
+2. **Ensure your SSH agent is running** (optional):
 
 ```bash
 # Check if agent is running
@@ -88,6 +91,8 @@ eval $(ssh-agent)
 # Add your key
 ssh-add ~/.ssh/id_ed25519
 ```
+
+**Note**: If you don't have a local SSH agent running, `sca` will automatically detect and use identity files (like `~/.ssh/id_ed25519`) by creating a temporary agent. This ensures you only need to enter your passphrase once.
 
 ### Installation
 
@@ -115,7 +120,19 @@ ssh-add ~/.ssh/id_ed25519
    git clone <private-hosts-repo-url> hosts
    ```
 
-3. **Run the Ansible playbook:**
+3. **Configure your settings** (optional):
+   ```bash
+   # Copy the example file
+   cp localvars-example.yml localvars.yml
+   
+   # Edit localvars.yml and set:
+   # - sca_key_server: IP or hostname of your SCA key server
+   # - sca_key_server_port: Port number
+   # - remote_username: Your username on remote servers
+   # - my_ssh_key: (optional) Custom key for SCA connections, e.g., ~/.ssh/id_ed25519_sca
+   ```
+
+4. **Run the Ansible playbook:**
    ```bash
    ansible-playbook playbook.yml
    ```
@@ -205,6 +222,7 @@ sca -d                  # Enable debug mode (verbose output)
 sca -r                  # Reverse the order of agents when multiplexing
 sca -l 2                # Set security level (0-3, default: auto-detect)
 sca --mux=rust          # Use Rust multiplexer instead of Python (default)
+sca --mux=python        # Use Python multiplexer (default)
 ```
 
 **Combined Options:**

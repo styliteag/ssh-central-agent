@@ -368,6 +368,7 @@ cleanup() {
     [ -n "$MUX_PID" ] && has_cleanup=true
     [ -n "$TAIL_LOG_PID" ] && has_cleanup=true
     [ -n "$RUST_MUX_LOG" ] && [ -f "$RUST_MUX_LOG" ] && has_cleanup=true
+    [ -n "$TEMP_AGENT_PID" ] && has_cleanup=true
     
     if [ "$has_cleanup" != "true" ]; then
         return
@@ -419,6 +420,11 @@ cleanup() {
         rm -f "$RUST_MUX_LOG" 2>/dev/null || true
     fi
     
+    # Clean up temporary SSH agent if it exists
+    if [ -n "$TEMP_AGENT_PID" ]; then
+        cleanup_temp_agent
+    fi
+    
     log_info "Cleanup complete"
 }
 
@@ -453,7 +459,25 @@ show_harmless_error_note() {
 # Find identity file in common locations
 find_identity_file() {
     local key_file
-    for key_file in ~/.ssh/id_ed25519 ~/.ssh/id_rsa ~/.ssh/id_ecdsa ~/.ssh/id_dsa; do
+    
+    # First, check if my_ssh_key is set in the SSH config (from localvars.yml)
+    # Look for IdentityFile in the sca-key host section
+    if [ -f "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" ]; then
+        local config_key
+        # Extract IdentityFile from sca-key host section (between "Host sca-key" and next "Host" or end of file)
+        config_key=$(awk '/^Host[[:space:]]+sca-key/,/^Host[[:space:]]+|^$/{if(/^[[:space:]]*IdentityFile[[:space:]]+/ && !/^[[:space:]]*#/){print $2; exit}}' "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" 2>/dev/null)
+        if [ -n "$config_key" ]; then
+            # Expand ~ to $HOME
+            config_key=$(echo "$config_key" | sed "s|^~|$HOME|")
+            if [ "$config_key" != "$HOME/.ssh/id_unused" ] && [ -f "$config_key" ] && [ -r "$config_key" ]; then
+                echo "$config_key"
+                return 0
+            fi
+        fi
+    fi
+
+    # Fall back to standard identity file locations
+    for key_file in ~/.ssh/id_ed25519 ~/.ssh/id_rsa ~/.ssh/id_ecdsa; do
         if [ -f "$key_file" ] && [ -r "$key_file" ]; then
             echo "$key_file"
             return 0
@@ -462,10 +486,98 @@ find_identity_file() {
     return 1
 }
 
+# Setup temporary SSH agent for identity file
+setup_temp_agent() {
+    local identity_file=$1
+    local temp_socket temp_pid
+    
+    if [ -z "$identity_file" ] || [ ! -f "$identity_file" ]; then
+        log_error "Invalid identity file: $identity_file"
+        return 1
+    fi
+    
+    log_info "Creating temporary SSH agent for identity file..."
+    
+    # Start ssh-agent and capture output
+    local agent_output
+    agent_output=$(ssh-agent -s 2>/dev/null)
+    if [ $? -ne 0 ]; then
+        log_error "Failed to start temporary SSH agent"
+        return 1
+    fi
+    
+    # Extract socket and PID from agent output
+    # Handle formats like: SSH_AUTH_SOCK=/tmp/ssh-XXXXXX/agent.12345; export SSH_AUTH_SOCK;
+    # or: SSH_AUTH_SOCK=/tmp/ssh-XXXXXX/agent.12345
+    temp_socket=$(echo "$agent_output" | grep "SSH_AUTH_SOCK" | sed -E 's/.*SSH_AUTH_SOCK=([^;[:space:]]+).*/\1/' | head -1)
+    temp_pid=$(echo "$agent_output" | grep "SSH_AGENT_PID" | sed -E 's/.*SSH_AGENT_PID=([^;[:space:]]+).*/\1/' | head -1)
+    
+    if [ -z "$temp_socket" ] || [ -z "$temp_pid" ]; then
+        log_error "Failed to parse ssh-agent output"
+        log_debug "ssh-agent output: $agent_output"
+        return 1
+    fi
+    
+    # Export variables for use in this shell
+    export SSH_AUTH_SOCK="$temp_socket"
+    export SSH_AGENT_PID="$temp_pid"
+    
+    # Add the identity file to the agent (this will prompt for passphrase once)
+    log_info "Adding identity file to temporary agent (you will be prompted for passphrase once)..."
+    if ! ssh-add "$identity_file"; then
+        log_error "Failed to add identity file to temporary agent"
+        cleanup_temp_agent
+        return 1
+    fi
+    
+    # Set global variables
+    TEMP_AGENT_SOCK="$temp_socket"
+    TEMP_AGENT_PID="$temp_pid"
+    
+    log_success "Temporary SSH agent created (PID: $temp_pid, Socket: $temp_socket)"
+    if [ "${DEBUG:-0}" == "1" ]; then
+      log_debug "Temporary agent details:"
+      log_debug "  PID: $temp_pid"
+      log_debug "  Socket: $temp_socket"
+      log_debug "  Keys in temporary agent:"
+      SSH_AUTH_SOCK="$temp_socket" ssh-add -l 2>&1 | while IFS= read -r line; do
+        log_debug "    $line"
+      done
+    fi
+    return 0
+}
+
+# Cleanup temporary SSH agent
+cleanup_temp_agent() {
+    if [ -n "$TEMP_AGENT_PID" ]; then
+        if kill -0 "$TEMP_AGENT_PID" 2>/dev/null; then
+            log_info "Stopping temporary SSH agent (PID $TEMP_AGENT_PID)"
+            kill -TERM "$TEMP_AGENT_PID" 2>/dev/null || true
+            # Wait a bit for clean shutdown
+            sleep 0.5
+            # Force kill if still running
+            if kill -0 "$TEMP_AGENT_PID" 2>/dev/null; then
+                kill -KILL "$TEMP_AGENT_PID" 2>/dev/null || true
+            fi
+        fi
+        TEMP_AGENT_PID=""
+    fi
+    
+    if [ -n "$TEMP_AGENT_SOCK" ] && [ -S "$TEMP_AGENT_SOCK" ]; then
+        log_info "Removing temporary SSH agent socket: $TEMP_AGENT_SOCK"
+        rm -f "$TEMP_AGENT_SOCK" 2>/dev/null || true
+        TEMP_AGENT_SOCK=""
+    fi
+}
+
 # Build SSH command with optional identity file
 build_ssh_cmd() {
     local cmd="ssh -a -F $PLAYBOOK_DIR/$SSH_CONFIG_FILE"
-    if [ "$USE_IDENTITY_FILE" == "true" ] && [ -n "$IDENTITY_FILE" ]; then
+    # If we have a temporary agent, use it instead of -i to avoid multiple passphrase prompts
+    if [ -n "$TEMP_AGENT_SOCK" ]; then
+        # Use equals format to avoid quote issues when eval'd
+        cmd="$cmd -o IdentityAgent=$TEMP_AGENT_SOCK"
+    elif [ "$USE_IDENTITY_FILE" == "true" ] && [ -n "$IDENTITY_FILE" ]; then
         cmd="$cmd -i \"$IDENTITY_FILE\""
     fi
     echo "$cmd"
@@ -565,13 +677,19 @@ wait_for_socket() {
 # Setup Python multiplexer (sshagentmux.py)
 setup_python_multiplexer() {
     log_info "Starting Python multiplexer (sshagentmux.py)..."
+    # The Python multiplexer uses SSH_AUTH_SOCK as the primary agent and --socket as the alternate
+    # We set SSH_AUTH_SOCK to the remote agent, and pass the local/temporary agent as --socket
+    # If ORG_SSH_AUTH_SOCK is /dev/null (no local agent), the multiplexer will detect it's invalid
+    # and just use the remote agent (SSH_AUTH_SOCK)
     if [ "$REVERSE" == "1" ]; then
         log_info "Reversing the order of the agents"
         SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK
         # shellcheck disable=SC1054,SC1009,SC1056,SC1072,SC1073
         eval "$($PLAYBOOK_DIR/sshagentmux.py --socket "${ORG_SSH_AUTH_SOCK}" --envname OMUX_)"
     else
-        eval "$($PLAYBOOK_DIR/sshagentmux.py --socket "${SCA_SSH_AUTH_SOCK}" --envname OMUX_)"
+        # Set SSH_AUTH_SOCK to remote agent (primary)
+        SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK
+        eval "$($PLAYBOOK_DIR/sshagentmux.py --socket "${ORG_SSH_AUTH_SOCK}" --envname OMUX_)"
     fi
     log_info "Python multiplexer started (PID: $OMUX_SSH_AGENT_PID)"
 }
@@ -592,31 +710,120 @@ execute_command_or_shell() {
     exit 0
     
   elif [ "$SSH_MODE" == "1" ]; then
-    # SSH Mode: Direct SSH connection with IdentityAgent
+    # SSH Mode: Direct SSH connection
     # Disable cleanup trap since we're not starting any background processes
     trap - EXIT INT TERM
-    # Select socket based on --key option (default: remote)
+    # Select socket based on --key option (default: mux)
     if [ "$KEY" == "mux" ]; then
       SSH_SOCKET="$MUX_SSH_AUTH_SOCK"
     elif [ "$KEY" == "local" ]; then
       SSH_SOCKET="$ORG_SSH_AUTH_SOCK"
     else
-      # Default to remote (KEY=remote or empty)
-      SSH_SOCKET="$SCA_SSH_AUTH_SOCK"
+      # Default to mux (KEY=remote or empty)
+      SSH_SOCKET="$MUX_SSH_AUTH_SOCK"
     fi
     # Verify socket exists and is working
-    if [ ! -S "$SSH_SOCKET" ]; then
+    if [ ! -S "$SSH_SOCKET" ] && [ ! -L "$SSH_SOCKET" ]; then
       log_error "Socket does not exist: $SSH_SOCKET"
+      exit 1
+    fi
+    # Check if it's a symlink and resolve it
+    local resolved_socket="$SSH_SOCKET"
+    if [ -L "$SSH_SOCKET" ]; then
+      resolved_socket=$(readlink -f "$SSH_SOCKET" 2>/dev/null || readlink "$SSH_SOCKET")
+      log_debug "Socket $SSH_SOCKET is a symlink pointing to: $resolved_socket"
+    fi
+    if [ ! -S "$resolved_socket" ]; then
+      log_error "Socket symlink target does not exist: $resolved_socket"
       exit 1
     fi
     if ! check_agent_socket "$SSH_SOCKET"; then
       log_error "Socket is not working: $SSH_SOCKET"
       exit 1
     fi
-    log_info "Connecting with IdentityAgent=$SSH_SOCKET: ssh $SSH_ARGS"
-    # Use -o IdentityAgent to explicitly specify the agent socket
-    eval "ssh -o 'IdentityAgent \"$SSH_SOCKET\"' -o 'IdentityFile none' $SSH_ARGS"
-    exit $?
+    # Debug: Show socket details and available keys
+    if [ "${DEBUG:-0}" == "1" ]; then
+      log_debug "Socket details:"
+      log_debug "  Selected socket: $SSH_SOCKET"
+      if [ -L "$SSH_SOCKET" ]; then
+        log_debug "  Type: symlink -> $resolved_socket"
+      else
+        log_debug "  Type: regular socket"
+      fi
+      log_debug "  Available keys:"
+      SSH_AUTH_SOCK="$SSH_SOCKET" ssh-add -l 2>&1 | while IFS= read -r line; do
+        log_debug "    $line"
+      done
+      log_debug "  Other socket paths:"
+      log_debug "    MUX_SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK"
+      log_debug "    SCA_SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK"
+      log_debug "    ORG_SSH_AUTH_SOCK=$ORG_SSH_AUTH_SOCK"
+      if [ -n "$TEMP_AGENT_SOCK" ]; then
+        log_debug "    TEMP_AGENT_SOCK=$TEMP_AGENT_SOCK"
+      fi
+    fi
+    log_info "Connecting via SSH config (IdentityAgent will use $SSH_SOCKET): ssh $SSH_ARGS"
+    # SSH config already has IdentityAgent set to mux socket, so just run ssh normally
+    local ssh_cmd="ssh -F $PLAYBOOK_DIR/$SSH_CONFIG_FILE"
+    # Add verbose flag in debug mode
+    if [ "${DEBUG:-0}" == "1" ]; then
+      ssh_cmd="$ssh_cmd -v"
+    fi
+    ssh_cmd="$ssh_cmd $SSH_ARGS"
+    if [ "${DEBUG:-0}" == "1" ]; then
+      log_debug "Executing SSH command: $ssh_cmd"
+      log_debug "SSH_AUTH_SOCK environment variable: ${SSH_AUTH_SOCK:-not set}"
+      # Show what SSH config resolves to for the target host
+      local target_host
+      target_host=$(echo "$SSH_ARGS" | awk '{print $1}')
+      if [ -n "$target_host" ]; then
+        log_debug "SSH config resolution for host '$target_host':"
+        ssh -F "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" -G "$target_host" 2>/dev/null | grep -E "^identityagent" | while IFS= read -r line; do
+          log_debug "  Config: $line"
+        done
+        # Resolve the IdentityAgent path from config
+        local config_identityagent
+        config_identityagent=$(ssh -F "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" -G "$target_host" 2>/dev/null | grep "^identityagent " | sed 's/^identityagent //')
+        if [ -n "$config_identityagent" ]; then
+          log_debug "  SSH config IdentityAgent resolves to: $config_identityagent"
+          if [ -L "$config_identityagent" ]; then
+            local resolved_agent
+            resolved_agent=$(readlink -f "$config_identityagent" 2>/dev/null || readlink "$config_identityagent")
+            log_debug "  Which is a symlink to: $resolved_agent"
+            log_debug "  Keys in resolved agent:"
+            SSH_AUTH_SOCK="$config_identityagent" ssh-add -l 2>&1 | while IFS= read -r line; do
+              log_debug "    $line"
+            done
+          elif [ -S "$config_identityagent" ]; then
+            log_debug "  Which is a regular socket"
+            log_debug "  Keys in this agent:"
+            SSH_AUTH_SOCK="$config_identityagent" ssh-add -l 2>&1 | while IFS= read -r line; do
+              log_debug "    $line"
+            done
+          fi
+        fi
+      fi
+      log_debug "Command will be executed with: eval"
+      log_debug "Environment variables that will be set:"
+      log_debug "  SSH_AUTH_SOCK=$SSH_SOCKET (will be set to this value)"
+      # Verify the agent socket before executing
+      log_debug "Verifying agent socket before SSH execution:"
+      SSH_AUTH_SOCK="$SSH_SOCKET" ssh-add -l 2>&1 | while IFS= read -r line; do
+        log_debug "  Agent keys: $line"
+      done
+    fi
+    SSH_AUTH_SOCK="$SSH_SOCKET" eval "$ssh_cmd"
+    local ssh_exit_code=$?
+    if [ $ssh_exit_code -ne 0 ]; then
+      log_error "SSH command failed with exit code $ssh_exit_code"
+    fi
+    # Clean up temporary agent after SSH connection completes
+    # The temporary agent was multiplexed with the remote agent, so it's no longer needed
+    if [ -n "$TEMP_AGENT_PID" ]; then
+      log_info "Cleaning up temporary SSH agent after SSH connection"
+      cleanup_temp_agent
+    fi
+    exit $ssh_exit_code
     
   elif [ -n "$CMD" ]; then
     log_info "STARTING: $CMD"
@@ -759,29 +966,62 @@ setup_new_connection() {
 
   log_success "Successfully started a remote agent at $SCA_SSH_AUTH_SOCK"
   
-  # Setup Agent Multiplexer (only if we have a local agent)
-  SKIP_MULTIPLEXER=false
-  if [ "$USE_IDENTITY_FILE" == "true" ] && [ "$LOCAL_SOCK" == "false" ]; then
-    # No local agent, only identity file - skip multiplexer
-    log_info "No local agent detected, skipping multiplexer setup"
-    log_info "Using remote agent directly"
-    SKIP_MULTIPLEXER=true
-    OMUX_SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK
-    OMUX_SSH_AGENT_PID=""
+  # Keep temporary agent alive - it will be multiplexed with remote agent
+  if [ -n "$TEMP_AGENT_PID" ]; then
+    log_info "Keeping temporary SSH agent (will be multiplexed with remote agent)"
+    if [ "${DEBUG:-0}" == "1" ]; then
+      log_debug "Temporary agent details:"
+      log_debug "  PID: $TEMP_AGENT_PID"
+      log_debug "  Socket: $TEMP_AGENT_SOCK"
+      log_debug "  Will be multiplexed with remote agent"
+    fi
+    # Don't reset LOCAL_SOCK - we still have the temporary agent
+  fi
+  
+  # Setup Agent Multiplexer
+  # If we have a temporary agent (from identity file), use it as the local agent
+  # Otherwise, use the original SSH_AUTH_SOCK as the local agent
+  local local_agent_sock=""
+  if [ -n "$TEMP_AGENT_SOCK" ] && [ -S "$TEMP_AGENT_SOCK" ]; then
+    # Use temporary agent as the local agent for multiplexing
+    local_agent_sock="$TEMP_AGENT_SOCK"
+    log_info "Will multiplex temporary agent (local key) with remote agent"
+  elif [ "$LOCAL_SOCK" == "true" ] && [ -n "$ORG_SSH_AUTH_SOCK" ] && [ -S "$ORG_SSH_AUTH_SOCK" ]; then
+    # Use original local agent
+    local_agent_sock="$ORG_SSH_AUTH_SOCK"
+    log_info "Will multiplex local agent with remote agent"
   else
-    log_info "Muxing the 2 Agents to one"
+    log_info "No local agent, will use remote agent only"
+  fi
+  
+  # Always set up multiplexer when we have a remote agent
+  # If we have a local/temporary agent, multiplex them
+  # If not, the multiplexer will just forward to the remote agent
+  if [ -S "$SCA_SSH_AUTH_SOCK" ] && check_agent_socket "$SCA_SSH_AUTH_SOCK"; then
+    log_info "Muxing the agents to one"
     USE_RUST_MUX=false
     [ "$MUX_TYPE" = "rust" ] && USE_RUST_MUX=true
-  fi
-
-  # Set up multiplexer (only if not skipping)
-  if [ "$SKIP_MULTIPLEXER" != "true" ]; then
-    # We have a local agent, set up multiplexer
+    
+    # Save original local agent socket before setting up multiplexer
+    # The multiplexer functions expect ORG_SSH_AUTH_SOCK to be the local agent
+    local saved_org_sock="$ORG_SSH_AUTH_SOCK"
+    if [ -n "$local_agent_sock" ] && [ -S "$local_agent_sock" ]; then
+      # We have a local/temporary agent - use it for multiplexing
+      ORG_SSH_AUTH_SOCK="$local_agent_sock"
+    else
+      # No local agent - pass a dummy path that the multiplexer will detect as invalid
+      # The multiplexer will then just use the remote agent (SSH_AUTH_SOCK)
+      ORG_SSH_AUTH_SOCK="/dev/null"
+    fi
+    
     if [ "$USE_RUST_MUX" == "true" ]; then
       setup_rust_multiplexer
     else
       setup_python_multiplexer
     fi
+    
+    # Restore original ORG_SSH_AUTH_SOCK
+    ORG_SSH_AUTH_SOCK="$saved_org_sock"
       
     # Set up multiplexer socket link
     MUX_PID=$OMUX_SSH_AGENT_PID
@@ -800,17 +1040,12 @@ setup_new_connection() {
     
     log_info "Verifying with: 'SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK ssh-add -l'"
     log_success "You can now use this key (even not in this SUBSHELL, thanks to .ssh/config magic)"
-    SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK ssh-add -l >&2
+    SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK ssh-add -l 2>&1 | while IFS= read -r line; do
+      log_info "$line"
+    done
   else
-    # No multiplexer - use remote agent directly (identity file only mode)
-    log_info "No local agent detected, using remote agent directly"
-    OMUX_SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK
-    OMUX_SSH_AGENT_PID=""
-    export SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK
-    export MUX_SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK
-    log_info "Verifying with: 'SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK ssh-add -l'"
-    log_success "Using remote agent directly (no local agent to multiplex)"
-    SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK ssh-add -l >&2
+    log_error "Remote agent socket not available"
+    exit 1
   fi
 }
 
@@ -834,6 +1069,14 @@ validate_local_agent() {
     if [ -n "$IDENTITY_FILE" ]; then
       USE_IDENTITY_FILE=true
       log_success "Found identity file: $IDENTITY_FILE"
+      # Create temporary agent to avoid multiple passphrase prompts
+      if setup_temp_agent "$IDENTITY_FILE"; then
+        LOCAL_SOCK=true  # We now have a temporary agent
+        log_info "Using temporary SSH agent for initial connections"
+      else
+        log_error "Failed to set up temporary SSH agent"
+        exit 1
+      fi
     else
       log_error 'No local SSH agent or identity file found.'
       log_error 'Either start an agent with "eval $(ssh-agent)" and add your keys,'
@@ -850,6 +1093,14 @@ validate_local_agent() {
       if [ -n "$IDENTITY_FILE" ]; then
         USE_IDENTITY_FILE=true
         log_success "Found identity file: $IDENTITY_FILE (will use instead of empty agent)"
+        # Create temporary agent to avoid multiple passphrase prompts
+        if setup_temp_agent "$IDENTITY_FILE"; then
+          LOCAL_SOCK=true  # We now have a temporary agent
+          log_info "Using temporary SSH agent for initial connections"
+        else
+          log_error "Failed to set up temporary SSH agent"
+          exit 1
+        fi
       else
         log_error "You have no key in your local agent and no identity file found!"
         exit 1
@@ -915,6 +1166,22 @@ use_existing_connection() {
     exit 1
   fi
   
+  # Ensure SSH config is patched with jump aliases for this level
+  # This is needed because Ansible might have regenerated the config,
+  # or the level might have changed
+  patch_jump_aliases
+  
+  # Keep temporary agent alive - it will be multiplexed with remote agent
+  if [ -n "$TEMP_AGENT_PID" ]; then
+    log_info "Keeping temporary SSH agent (will be multiplexed with remote agent)"
+    if [ "${DEBUG:-0}" == "1" ]; then
+      log_debug "Temporary agent details:"
+      log_debug "  PID: $TEMP_AGENT_PID"
+      log_debug "  Socket: $TEMP_AGENT_SOCK"
+      log_debug "  Will be multiplexed with remote agent"
+    fi
+  fi
+  
   if [ -n "$LEVEL" ]; then
     if [ "$LEVEL" -ne "$MAX_LEVEL" ] && [ "$LEVEL" -lt "$MY_LEVEL" ]; then
       # User Requesting Lower Level, allow it
@@ -923,7 +1190,7 @@ use_existing_connection() {
     fi
   fi
 
-  # Determine which socket to use
+  # Use the multiplexed socket if available, otherwise use remote agent
   if [ -S "$MUX_SSH_AUTH_SOCK" ] && check_agent_socket "$MUX_SSH_AUTH_SOCK"; then
     log_info "Using working multiplexed SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK"
     export SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK
@@ -935,6 +1202,12 @@ use_existing_connection() {
     log_error "No working agent socket found"
     exit 1
   fi
+  
+  # Show available keys from the mux socket (which has both local and remote keys if multiplexed)
+  log_info "Verifying with: 'SSH_AUTH_SOCK=$SSH_AUTH_SOCK ssh-add -l'"
+  SSH_AUTH_SOCK=$SSH_AUTH_SOCK ssh-add -l 2>&1 | while IFS= read -r line; do
+    log_info "$line"
+  done
 }
 
 # Setup Rust multiplexer (ssh-agent-mux)
@@ -1339,7 +1612,10 @@ Options:
                            local:  Use local SSH agent only
                            remote: Use remote SSH agent only (default)
                            mux:    Use multiplexed agent (combines local + remote)
-  --mux=python|rust     Choose multiplexer type (default: python)
+  --mux=python|rust       Choose multiplexer type (default: python)
+                           python: Use Python multiplexer (sshagentmux.py)
+                           rust:   Use Rust multiplexer (ssh-agent-mux)
+                           none:   Skip multiplexer, use remote agent only
   --list                List all configured hosts
   --find HOSTNAME       Find and display information about a specific host
   --add HOSTNAME        Add a new host to the configuration
