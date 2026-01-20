@@ -73,7 +73,7 @@ def log_error(message: str) -> None:
     else:
         colored = _colorize("ERROR:", Colors.RED, bold=True)
         msg = _colorize(message, Colors.RED)
-    print(f"{colored} {msg}", file=sys.stderr)
+    print(f"{colored} {msg}", file=sys.stderr, flush=True)
 
 
 def log_warn(message: str) -> None:
@@ -84,7 +84,7 @@ def log_warn(message: str) -> None:
     else:
         colored = _colorize("WARNING:", Colors.YELLOW, bold=True)
         msg = _colorize(message, Colors.YELLOW)
-    print(f"{colored} {msg}", file=sys.stderr)
+    print(f"{colored} {msg}", file=sys.stderr, flush=True)
 
 
 def log_info(message: str) -> None:
@@ -95,7 +95,9 @@ def log_info(message: str) -> None:
     else:
         colored = _colorize("INFO:", Colors.BLUE, bold=True)
         msg = _colorize(message, Colors.BLUE)
-    print(f"{colored} {msg}", file=sys.stderr)
+    # Remove any carriage returns and ensure clean output
+    clean_msg = msg.replace('\r', '').rstrip()
+    print(f"{colored} {clean_msg}", file=sys.stderr, flush=True)
 
 
 def log_success(message: str) -> None:
@@ -106,7 +108,8 @@ def log_success(message: str) -> None:
     else:
         checkmark = _colorize("✓", Colors.GREEN, bold=True)
         msg = _colorize(message, Colors.GREEN)
-    print(f"{checkmark} {msg}", file=sys.stderr)
+    clean_msg = msg.replace('\r', '').rstrip()
+    print(f"{checkmark} {clean_msg}", file=sys.stderr, flush=True)
 
 
 def log_debug(message: str) -> None:
@@ -119,7 +122,8 @@ def log_debug(message: str) -> None:
     else:
         colored = _colorize("DEBUG:", Colors.MAGENTA, bold=True)
         msg = _colorize(message, Colors.MAGENTA)
-    print(f"{colored} {msg}", file=sys.stderr)
+    clean_msg = msg.replace('\r', '').rstrip()
+    print(f"{colored} {clean_msg}", file=sys.stderr, flush=True)
 
 
 def log_note(message: str) -> None:
@@ -130,7 +134,8 @@ def log_note(message: str) -> None:
     else:
         colored = _colorize("NOTE:", Colors.CYAN, bold=True)
         msg = _colorize(message, Colors.CYAN)
-    print(f"{colored} {msg}", file=sys.stderr)
+    clean_msg = msg.replace('\r', '').rstrip()
+    print(f"{colored} {clean_msg}", file=sys.stderr, flush=True)
 
 
 # Color helpers for syntax highlighting

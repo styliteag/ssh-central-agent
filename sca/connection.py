@@ -19,7 +19,7 @@ from .process import (
     kill_all_sca_processes, process_exists
 )
 from .logging_utils import log_info, log_error, log_success, log_warn, log_debug
-from .platform_utils import get_home_dir
+from .platform_utils import get_home_dir, expand_path
 
 
 # Constants
@@ -168,11 +168,20 @@ def start_remote_agent(
     
     log_info(f"Starting SSH agent forwarder (level {level})...")
     
+    # Expand socket path (SSH -L requires absolute path, doesn't expand ~)
+    expanded_socket = str(expand_path(sca_ssh_auth_sock))
+    log_debug(f"Expanded socket path: {sca_ssh_auth_sock} -> {expanded_socket}")
+    
+    # Validate rusername
+    if not rusername:
+        log_error("Remote username (rusername) is required but not set")
+        raise RuntimeError("Remote username is required")
+    
     # Build the SSH command with port forwarding
     remote_socket = f"/home/{rusername}/yubikey-agent.sock"
     ssh_cmd_list.extend([
         "-tt", "-a",
-        "-L", f"{sca_ssh_auth_sock}:{remote_socket}",
+        "-L", f"{expanded_socket}:{remote_socket}",
         "-o", f"SetEnv SCA_LEVEL={level}",
         "sca-key", "ragent",
         f"{os.environ.get('LOGNAME', '')},{os.environ.get('USER', '')},{rusername},{level},{max_level},{socket.gethostname()},{get_home_dir()}"
@@ -185,11 +194,17 @@ def start_remote_agent(
     env["SCA_IP"] = socket.gethostname()
     
     # Start SSH process in background
+    # Capture stderr to a temporary file for debugging
+    import tempfile
+    ssh_stderr_file = tempfile.NamedTemporaryFile(mode='w', suffix='.log', delete=False, delete_on_close=False)
+    ssh_stderr_file.close()
+    
     try:
+        log_debug(f"SSH command: {' '.join(ssh_cmd_list)}")
         process = subprocess.Popen(
             ssh_cmd_list,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=open(ssh_stderr_file.name, 'w'),
             env=env,
             start_new_session=True  # Detach from parent
         )
@@ -211,8 +226,8 @@ def start_remote_agent(
             log_error(f"SSH process (PID {ssh_pid}) died unexpectedly")
             raise RuntimeError("SSH process died unexpectedly")
         
-        # Check if socket exists and is working
-        if verify_socket_working(sca_ssh_auth_sock):
+        # Check if socket exists and is working (use expanded path)
+        if verify_socket_working(expanded_socket):
             return ssh_pid
         
         log_info(f"Trying to connect to agent ({iterations}/{SSH_RETRY_MAX})")
@@ -223,6 +238,32 @@ def start_remote_agent(
     # Check if SSH process is still running
     if process_exists(ssh_pid):
         log_error(f"SSH process (PID {ssh_pid}) is still running but socket is not working")
+        log_debug(f"Socket path: {expanded_socket}")
+        log_debug(f"Socket exists: {Path(expanded_socket).exists()}")
+        
+        # Read SSH stderr for debugging
+        try:
+            with open(ssh_stderr_file.name, 'r') as f:
+                ssh_errors = f.read().strip()
+                if ssh_errors:
+                    # Clean up SSH stderr - remove carriage returns and normalize whitespace
+                    cleaned_errors = '\n'.join(
+                        line.strip() for line in ssh_errors.splitlines() 
+                        if line.strip() and not line.strip().startswith('\r')
+                    )
+                    # Remove duplicate consecutive lines
+                    lines = cleaned_errors.split('\n')
+                    unique_lines = []
+                    prev_line = None
+                    for line in lines:
+                        if line != prev_line:
+                            unique_lines.append(line)
+                        prev_line = line
+                    if unique_lines:
+                        log_debug(f"SSH stderr output:\n" + '\n'.join(unique_lines))
+        except Exception:
+            pass
+        
         from .process import kill_if_exists
         kill_if_exists(ssh_pid, "SSH agent forwarder")
     

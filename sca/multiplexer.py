@@ -39,9 +39,23 @@ def setup_python_multiplexer(
     """
     log_info("Starting Python multiplexer (sshagentmux.py)...")
     
-    sshagentmux_path = Path(playbook_dir) / "sshagentmux.py"
+    # Resolve playbook_dir to absolute path
+    playbook_dir_resolved = Path(playbook_dir).resolve()
+    sshagentmux_path = playbook_dir_resolved / "sshagentmux.py"
+    
     if not sshagentmux_path.exists():
-        raise RuntimeError(f"sshagentmux.py not found at {sshagentmux_path}")
+        # Try alternative locations
+        alt_paths = [
+            Path.cwd() / "sshagentmux.py",
+            Path(__file__).parent.parent / "sshagentmux.py",  # Relative to sca package
+        ]
+        for alt_path in alt_paths:
+            if alt_path.exists():
+                sshagentmux_path = alt_path.resolve()
+                log_debug(f"Found sshagentmux.py at alternative location: {sshagentmux_path}")
+                break
+        else:
+            raise RuntimeError(f"sshagentmux.py not found at {sshagentmux_path} or alternative locations")
     
     # The Python multiplexer uses SSH_AUTH_SOCK as the primary agent and --socket as the alternate
     # We set SSH_AUTH_SOCK to the remote agent, and pass the local/temporary agent as --socket

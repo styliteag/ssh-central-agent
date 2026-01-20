@@ -95,16 +95,27 @@ def execute_command_or_shell(
         elif key == "local":
             ssh_socket = org_ssh_auth_sock
         else:
-            # Default to mux
-            ssh_socket = mux_ssh_auth_sock
+            # Default to mux, but fall back to remote agent if mux doesn't work
+            if verify_socket_working(mux_ssh_auth_sock):
+                ssh_socket = mux_ssh_auth_sock
+            elif verify_socket_working(ssh_auth_sock):
+                ssh_socket = ssh_auth_sock
+            else:
+                ssh_socket = mux_ssh_auth_sock  # Will fail below with better error
         
         # Resolve symlink if needed
         resolved_socket = resolve_socket_path(ssh_socket)
         
         # Verify socket
         if not verify_socket_working(resolved_socket):
-            log_error(f"Socket is not working: {resolved_socket}")
-            sys.exit(1)
+            # Try fallback to remote agent if mux failed
+            if ssh_socket == mux_ssh_auth_sock and verify_socket_working(ssh_auth_sock):
+                resolved_socket = resolve_socket_path(ssh_auth_sock)
+                ssh_socket = ssh_auth_sock
+                log_info(f"Multiplexer socket not available, using remote agent: {resolved_socket}")
+            else:
+                log_error(f"Socket is not working: {resolved_socket}")
+                sys.exit(1)
         
         # Debug output
         if os.environ.get("DEBUG") == "1":
@@ -128,9 +139,17 @@ def execute_command_or_shell(
             except Exception:
                 pass
         
+        # Expand socket path to absolute path for SSH
+        from .platform_utils import expand_path
+        expanded_socket = str(expand_path(resolved_socket))
+        
         # Build SSH command
         config_path = Path(playbook_dir) / ssh_config_file
         ssh_cmd = ["ssh", "-F", str(config_path)]
+        
+        # Override IdentityAgent to use the working socket
+        # The config may specify a mux socket that doesn't exist, so we override it
+        ssh_cmd.extend(["-o", f"IdentityAgent={expanded_socket}"])
         
         if os.environ.get("DEBUG") == "1":
             ssh_cmd.append("-v")
@@ -140,13 +159,43 @@ def execute_command_or_shell(
             import shlex
             ssh_cmd.extend(shlex.split(ssh_args))
         
-        log_info(f"Connecting via SSH config (IdentityAgent will use {resolved_socket}): ssh {' '.join(ssh_cmd[3:])}")
+        # Verify socket exists and is accessible before passing to SSH
+        socket_path = Path(expanded_socket)
+        if not socket_path.exists():
+            log_error(f"Socket does not exist: {expanded_socket}")
+            sys.exit(1)
         
-        # Execute SSH
+        if not verify_socket_working(expanded_socket):
+            log_error(f"Socket is not working: {expanded_socket}")
+            sys.exit(1)
+        
+        log_info(f"Connecting via SSH config (SSH_AUTH_SOCK={expanded_socket}): ssh {' '.join(ssh_cmd[3:])}")
+        
+        # Execute SSH with SSH_AUTH_SOCK set in environment
+        # Make sure to use a clean environment copy and explicitly set the socket
+        env = os.environ.copy()
+        env["SSH_AUTH_SOCK"] = expanded_socket
+        
+        # Debug: verify environment variable is set and test socket
+        if os.environ.get("DEBUG") == "1":
+            log_debug(f"Environment SSH_AUTH_SOCK={env.get('SSH_AUTH_SOCK')}")
+            # Test that SSH can see the agent
+            test_result = subprocess.run(
+                ["ssh-add", "-l"],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if test_result.returncode == 0:
+                log_debug(f"Agent accessible: {test_result.stdout.strip()}")
+            else:
+                log_debug(f"Agent test failed: {test_result.stderr}")
+        
         try:
             result = subprocess.run(
                 ssh_cmd,
-                env={"SSH_AUTH_SOCK": resolved_socket, **os.environ}
+                env=env
             )
             exit_code = result.returncode
         except KeyboardInterrupt:
@@ -518,12 +567,45 @@ def main():
     signal.signal(signal.SIGTERM, cleanup_handler)
     
     # Get configuration from environment (set by Ansible-generated script)
-    playbook_dir = os.environ.get("PLAYBOOK_DIR", ".")
+    # Resolve playbook_dir to absolute path - if not set, use directory containing this module
+    playbook_dir_env = os.environ.get("PLAYBOOK_DIR", "")
+    if playbook_dir_env:
+        playbook_dir = str(Path(playbook_dir_env).resolve())
+    else:
+        # Default to directory containing sca package (where sshagentmux.py should be)
+        # Try to find it relative to the sca package location
+        sca_package_dir = Path(__file__).parent.parent.resolve()
+        if (sca_package_dir / "sshagentmux.py").exists():
+            playbook_dir = str(sca_package_dir)
+        else:
+            # Fallback to current directory
+            playbook_dir = str(Path.cwd().resolve())
+    
     ssh_config_file = os.environ.get("SSH_CONFIG_FILE", "config")
     sca_ssh_auth_sock = os.environ.get("SCA_SSH_AUTH_SOCK", str(Path.home() / ".ssh" / "scadev-agent.sock"))
     mux_ssh_auth_sock = os.environ.get("MUX_SSH_AUTH_SOCK", str(Path.home() / ".ssh" / "scadev-mux.sock"))
     rusername = os.environ.get("RUSERNAME", "")
     org_ssh_auth_sock = os.environ.get("ORG_SSH_AUTH_SOCK", os.environ.get("SSH_AUTH_SOCK", ""))
+    
+    # If RUSERNAME is not set, try to read from localvars.yml
+    if not rusername:
+        localvars_path = Path(playbook_dir) / "localvars.yml"
+        if localvars_path.exists():
+            try:
+                with open(localvars_path, 'r') as f:
+                    for line in f:
+                        if line.strip().startswith("remote_username:"):
+                            rusername = line.split(":", 1)[1].strip()
+                            break
+            except Exception:
+                pass
+    
+    # Validate rusername
+    if not rusername:
+        from .logging_utils import log_error
+        log_error("RUSERNAME not set. Set it in environment or localvars.yml")
+        log_error("Example: export RUSERNAME=wb")
+        sys.exit(1)
     
     # Parse CLI arguments (if click is available)
     if cli and hasattr(cli, 'click') and cli.click:
