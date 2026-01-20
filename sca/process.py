@@ -16,14 +16,14 @@ PROC_PYTHON_MUX = "sshagentmux.py"
 def kill_if_exists(pid: int, name: str) -> None:
     """
     Kill a process if it exists and is running.
-    
+
     Args:
         pid: Process ID
         name: Process name (for logging)
     """
     if not pid:
         return
-    
+
     try:
         # Use os.kill (standard library)
         os.kill(pid, signal.SIGTERM)
@@ -39,13 +39,13 @@ def kill_if_exists(pid: int, name: str) -> None:
 def kill_processes(pattern: str, name: str) -> None:
     """
     Kill processes matching a pattern in their command line.
-    
+
     Args:
         pattern: Pattern to match in process command line
         name: Process name (for logging)
     """
     killed_any = False
-    
+
     # Use pkill if available (Unix only)
     if not is_windows():
         try:
@@ -59,7 +59,7 @@ def kill_processes(pattern: str, name: str) -> None:
                 killed_any = True
         except FileNotFoundError:
             log_debug("pkill not available, cannot kill processes by pattern")
-    
+
     if not killed_any:
         log_debug(f"No processes found matching pattern: {pattern}")
 
@@ -67,12 +67,12 @@ def kill_processes(pattern: str, name: str) -> None:
 def kill_process_by_name(process_name: str) -> None:
     """
     Kill processes by exact name.
-    
+
     Args:
         process_name: Exact process name to kill
     """
     killed_any = False
-    
+
     # Use pkill -x if available (Unix only)
     if not is_windows():
         try:
@@ -86,7 +86,7 @@ def kill_process_by_name(process_name: str) -> None:
                 killed_any = True
         except FileNotFoundError:
             log_debug("pkill not available, cannot kill processes by name")
-    
+
     if not killed_any:
         log_debug(f"No processes found with name: {process_name}")
 
@@ -101,7 +101,7 @@ def kill_all_sca_processes() -> None:
 def check_ssh_agent_running() -> bool:
     """
     Check if SSH process with ragent is still running.
-    
+
     Returns:
         True if SSH agent forwarder is running
     """
@@ -126,31 +126,31 @@ def check_ssh_agent_running() -> bool:
 def verify_remote_agent_working(socket_path: str) -> bool:
     """
     Verify socket exists, is working, and SSH process is running.
-    
+
     Args:
         socket_path: Path to the socket
-        
+
     Returns:
         True if socket is working and SSH process is running
     """
     from .socket_utils import verify_socket_working
-    
+
     return verify_socket_working(socket_path) and check_ssh_agent_running()
 
 
 def process_exists(pid: int) -> bool:
     """
     Check if a process with the given PID exists.
-    
+
     Args:
         pid: Process ID
-        
+
     Returns:
         True if process exists
     """
     if not pid:
         return False
-    
+
     try:
         # Use os.kill with signal 0 (doesn't kill, just checks)
         os.kill(pid, 0)

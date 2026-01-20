@@ -52,20 +52,20 @@ def cleanup_handler(signum=None, frame=None):
     """Handle cleanup on exit."""
     global sca_exiting, tail_log_pid, temp_agent_pid, _started_ssh_pid, _started_mux_pid
     sca_exiting = True
-    
+
     if temp_agent_pid:
         log_info(f"Cleaning up temporary SSH agent (PID {temp_agent_pid})")
         cleanup_temp_agent(temp_agent_pid, temp_agent_sock or "")
-    
+
     # Only kill processes we started (not ones from other instances)
     if _started_ssh_pid:
         log_info(f"Killing SSH agent forwarder (TCP port forwarding) (PID {_started_ssh_pid})")
         kill_if_exists(_started_ssh_pid, "SSH agent forwarder")
-    
+
     if _started_mux_pid:
         log_info(f"Killing SSH agent multiplexer (PID {_started_mux_pid})")
         kill_if_exists(_started_mux_pid, "SSH agent multiplexer")
-    
+
     if tail_log_pid:
         log_info(f"Killing log tail process (PID {tail_log_pid})")
         kill_if_exists(tail_log_pid, "log tail")
@@ -81,12 +81,12 @@ def execute_command_or_shell(
 ) -> None:
     """Execute command or start shell based on mode."""
     global temp_agent_pid, temp_agent_sock
-    
+
     shell_mode = os.environ.get("SHELL_MODE") == "1"
     ssh_mode = os.environ.get("SSH_MODE") == "1"
     wait_mode = os.environ.get("WAIT") == "1"
     key = os.environ.get("KEY", "mux")
-    
+
     if shell_mode:
         # Shell Mode: Output environment variables in ssh-agent format
         print(f"SSH_AUTH_SOCK={ssh_auth_sock}; export SSH_AUTH_SOCK;")
@@ -95,13 +95,13 @@ def execute_command_or_shell(
             print(f"SSH_AGENT_PID={agent_pid}; export SSH_AGENT_PID;")
             print(f"echo Agent pid {agent_pid};")
         sys.exit(0)
-    
+
     elif ssh_mode:
         # SSH Mode: Direct SSH connection
         # Expand paths before checking (needed for fallback logic)
         expanded_mux_sock = str(expand_path(mux_ssh_auth_sock))
         expanded_ssh_auth_sock = str(expand_path(ssh_auth_sock))
-        
+
         # Select socket based on --key option
         if key == "mux":
             ssh_socket = expanded_mux_sock
@@ -120,7 +120,7 @@ def execute_command_or_shell(
             expanded_remote = str(expand_path(ssh_auth_sock))
             expanded_mux = str(expand_path(mux_ssh_auth_sock))
             expanded_local = str(expand_path(local_sock)) if local_sock else ""
-            
+
             if expanded_local == expanded_remote or expanded_local == expanded_mux:
                 # Fall back to environment variable if org_ssh_auth_sock was overwritten
                 local_sock = os.environ.get("ORG_SSH_AUTH_SOCK") or os.environ.get("SSH_AUTH_SOCK", "")
@@ -165,14 +165,14 @@ def execute_command_or_shell(
                 log_info(f"Using remote agent (fallback): {ssh_socket}")
             else:
                 ssh_socket = expanded_mux_sock  # Will fail below with better error
-        
+
         # Resolve symlink if needed (but skip for local/remote keys since we already verified)
         if key in ("local", "remote"):
             # For explicit key selection, use the socket as-is (already verified)
             resolved_socket = ssh_socket
         else:
             resolved_socket = resolve_socket_path(ssh_socket)
-            
+
             # Verify socket
             if not verify_socket_working(resolved_socket):
                 # Try fallback to remote agent if mux failed
@@ -183,7 +183,7 @@ def execute_command_or_shell(
                 else:
                     log_error(f"Socket is not working: {resolved_socket}")
                     sys.exit(1)
-        
+
         # Show available keys in the selected agent
         # Use absolute path and ensure we override any existing SSH_AUTH_SOCK in environment
         agent_socket = str(expand_path(resolved_socket))
@@ -214,7 +214,7 @@ def execute_command_or_shell(
                     log_debug(f"  ssh-add error: {result.stderr}")
         except Exception as e:
             log_debug(f"Error listing keys: {e}")
-        
+
         # Debug output
         if os.environ.get("DEBUG") == "1":
             log_debug("Socket details:")
@@ -223,14 +223,14 @@ def execute_command_or_shell(
                 log_debug(f"  Type: symlink -> {resolved_socket}")
             else:
                 log_debug("  Type: regular socket")
-        
+
         # Expand socket path to absolute path for SSH
         expanded_socket = str(expand_path(resolved_socket))
-        
+
         # Build SSH command
         config_path = Path(playbook_dir) / ssh_config_file
         ssh_cmd = ["ssh", "-F", str(config_path)]
-        
+
         # Override IdentityAgent to use the working socket
         # The config may specify a mux socket that doesn't exist, so we override it
         # For paths with spaces, we need to quote the value in SSH config format
@@ -241,41 +241,41 @@ def execute_command_or_shell(
             ssh_cmd.extend(["-o", f"IdentityAgent='{expanded_socket}'"])
         else:
             ssh_cmd.extend(["-o", f"IdentityAgent={expanded_socket}"])
-        
+
         if os.environ.get("DEBUG") == "1":
             ssh_cmd.append("-v")
-        
+
         # Add SSH arguments
         if ssh_args:
             import shlex
             ssh_cmd.extend(shlex.split(ssh_args))
-        
+
         # Verify socket exists and is accessible before passing to SSH
         socket_path = Path(expanded_socket)
         if not socket_path.exists():
             log_error(f"Socket does not exist: {expanded_socket}")
             sys.exit(1)
-        
+
         if not verify_socket_working(expanded_socket):
             log_error(f"Socket is not working: {expanded_socket}")
             sys.exit(1)
-        
+
         log_info(f"Connecting via SSH config (SSH_AUTH_SOCK={expanded_socket}): ssh {' '.join(ssh_cmd[3:])}")
-        
+
         # Execute SSH with SSH_AUTH_SOCK set in environment
         # Make sure to use a clean environment copy and explicitly set the socket
         env = os.environ.copy()
         env["SSH_AUTH_SOCK"] = expanded_socket
-        
+
         # Debug: Only log the environment variable, don't test the agent (blocking)
         if os.environ.get("DEBUG") == "1":
             log_debug(f"Environment SSH_AUTH_SOCK={env.get('SSH_AUTH_SOCK')}")
-        
+
         # Flush all output before handing control to SSH
         # This ensures no buffered output interferes with SSH's terminal control
         sys.stderr.flush()
         sys.stdout.flush()
-        
+
         # Close any file descriptors that might interfere (except stdin/stdout/stderr)
         # This ensures SSH gets a clean terminal
         try:
@@ -289,7 +289,7 @@ def execute_command_or_shell(
                     pass
         except Exception:
             pass  # Ignore errors closing file descriptors
-        
+
         # Use os.execvpe to completely replace this process with SSH
         # This gives SSH full terminal control without any Python wrapper interference
         try:
@@ -302,35 +302,35 @@ def execute_command_or_shell(
         except Exception as e:
             log_error(f"SSH command failed: {e}")
             exit_code = 1
-        
+
         # Clean up temporary agent after SSH connection
         if temp_agent_pid:
             log_info("Cleaning up temporary SSH agent after SSH connection")
             cleanup_temp_agent(temp_agent_pid, temp_agent_sock or "")
-        
+
         sys.exit(exit_code)
-    
+
     elif wait_mode:
         # Wait Mode: Monitor connection and restart if needed
         log_info(f"WAIT in a Loop and check every {CHECK_SECONDS} if the Connection is dead")
-        
+
         # Expand socket paths before checking
         expanded_mux_sock = str(expand_path(mux_ssh_auth_sock))
         expanded_sca_sock = str(expand_path(ssh_auth_sock))
-        
+
         # Give sockets a moment to stabilize before first check
         time.sleep(2)
-        
+
         while True:
             if sca_exiting:
                 log_info("Exiting...")
                 break
-            
+
             # Check the appropriate socket (prefer mux, fallback to remote agent)
             socket_to_check = expanded_mux_sock
             if not verify_socket_working(expanded_mux_sock):
                 socket_to_check = expanded_sca_sock
-            
+
             if not verify_socket_working(socket_to_check):
                 if sca_exiting:
                     log_info("Exiting due to intentional termination")
@@ -345,9 +345,9 @@ def execute_command_or_shell(
                 sys.exit(255)
             else:
                 print(".", end="", file=sys.stderr, flush=True)
-            
+
             time.sleep(CHECK_SECONDS)
-    
+
     else:
         # Default: Start Interactive Subshell
         log_info("Starting Subshell")
@@ -371,13 +371,13 @@ def setup_new_connection(
 ) -> Dict[str, Any]:
     """Setup a new connection."""
     global ssh_pid, mux_pid, temp_agent_sock, temp_agent_pid, _started_ssh_pid, _started_mux_pid
-    
+
     # Use parameter values, update globals
     temp_agent_sock = temp_agent_sock_param
     temp_agent_pid = temp_agent_pid_param
-    
+
     log_info("No working agent found: Starting new connection")
-    
+
     # Remove old sockets (expand paths first)
     for sock in [sca_ssh_auth_sock, mux_ssh_auth_sock]:
         sock_path = Path(expand_path(sock))
@@ -387,7 +387,7 @@ def setup_new_connection(
                 sock_path.unlink()
             except OSError as e:
                 log_debug(f"Error removing socket {sock_path}: {e}")
-    
+
     # Determine security level
     try:
         my_level = determine_security_level(
@@ -400,9 +400,9 @@ def setup_new_connection(
     except Exception as e:
         log_error(f"Failed to determine security level: {e}")
         sys.exit(1)
-    
+
     log_info(f"You are a Level {my_level} user")
-    
+
     # Handle level override
     if level is not None and level != MAX_LEVEL and level < my_level:
         log_warn(f"LOWER level to {level}")
@@ -410,7 +410,7 @@ def setup_new_connection(
     elif level is None:
         log_error("Cannot find your level (Maybe something is not working). Stopping")
         sys.exit(1)
-    
+
     # Start remote agent
     try:
         ssh_pid = start_remote_agent(
@@ -428,12 +428,12 @@ def setup_new_connection(
     except Exception as e:
         log_error(f"Failed to start remote agent: {e}")
         sys.exit(1)
-    
+
     # Patch SSH config
     patch_jump_aliases(playbook_dir, ssh_config_file, my_level)
-    
+
     log_success(f"Successfully started a remote agent at {sca_ssh_auth_sock}")
-    
+
     # Determine local agent socket for multiplexing
     local_agent_sock = None
     if temp_agent_sock and verify_socket_working(temp_agent_sock):
@@ -444,21 +444,21 @@ def setup_new_connection(
         log_info("Will multiplex local agent with remote agent")
     else:
         log_info("No local agent, will use remote agent only")
-    
+
     # Setup multiplexer
     omux_socket = None
     omux_pid = None
     skip_symlink = False
-    
+
     # Expand socket path before checking
     expanded_sca_sock = str(expand_path(sca_ssh_auth_sock))
-    
+
     if verify_socket_working(expanded_sca_sock):
         log_info("Muxing the agents to one")
-        
+
         # Use local agent or dummy path
         org_sock_for_mux = local_agent_sock if local_agent_sock else "/dev/null"
-        
+
         try:
             mux_result = setup_python_multiplexer(
                 playbook_dir,
@@ -472,10 +472,10 @@ def setup_new_connection(
         except Exception as e:
             log_error(f"Failed to setup Python multiplexer: {e}")
             sys.exit(1)
-        
+
         mux_pid = omux_pid
         _started_mux_pid = omux_pid  # Track that we started this process
-        
+
         # Create symlink if needed
         if not skip_symlink:
             omux_expanded = expand_path(omux_socket)
@@ -504,12 +504,12 @@ def setup_new_connection(
                         log_debug(f"Created symlink: {target_expanded} -> {omux_socket}")
                 except OSError as e:
                     log_debug(f"Could not create symlink: {e}")
-        
+
         os.environ["ORG_MUX_SSH_AUTH_SOCK"] = omux_socket
         # Use expanded path for environment variable
         expanded_mux_sock = str(expand_path(mux_ssh_auth_sock))
         os.environ["SSH_AUTH_SOCK"] = expanded_mux_sock
-        
+
         log_info(f"Verifying with: 'SSH_AUTH_SOCK={expanded_mux_sock} ssh-add -l'")
         log_success("You can now use this key (even not in this SUBSHELL, thanks to .ssh/config magic)")
         try:
@@ -528,7 +528,7 @@ def setup_new_connection(
         log_error(f"Remote agent socket not available: {expanded_sca_sock}")
         log_debug(f"Socket exists: {Path(expanded_sca_sock).exists()}")
         sys.exit(1)
-    
+
     return {
         "my_level": my_level,
         "ssh_pid": ssh_pid,
@@ -551,7 +551,7 @@ def use_existing_connection(
 ) -> Dict[str, Any]:
     """Use an existing connection."""
     global temp_agent_pid, temp_agent_sock, ssh_pid, mux_pid, _started_ssh_pid, _started_mux_pid
-    
+
     # Check if we need a temporary agent
     has_local_agent = False
     if org_ssh_auth_sock and verify_socket_working(org_ssh_auth_sock):
@@ -560,7 +560,7 @@ def use_existing_connection(
         current_sock = os.environ["SSH_AUTH_SOCK"]
         if current_sock != sca_ssh_auth_sock and current_sock != mux_ssh_auth_sock:
             has_local_agent = True
-    
+
     if not has_local_agent:
         # Check if mux socket has local key
         id_file = find_identity_file()
@@ -570,7 +570,7 @@ def use_existing_connection(
             if id_fingerprint and check_key_in_agent(mux_ssh_auth_sock, id_fingerprint):
                 needs_local_key = False
                 log_info("Mux socket already has local key, no need to create temporary agent")
-        
+
         if needs_local_key and id_file:
             log_info("Creating temporary SSH agent for local key (needed for connection)...")
             try:
@@ -580,7 +580,7 @@ def use_existing_connection(
                 log_info("Temporary SSH agent created")
             except Exception as e:
                 log_warn(f"Failed to create temporary agent: {e}")
-    
+
     # Determine level
     try:
         my_level = determine_security_level(
@@ -593,15 +593,15 @@ def use_existing_connection(
     except Exception as e:
         log_error(f"Failed to determine security level: {e}")
         sys.exit(1)
-    
+
     # Patch SSH config
     patch_jump_aliases(playbook_dir, ssh_config_file, my_level)
-    
+
     # Handle level override
     if level is not None and level != MAX_LEVEL and level < my_level:
         log_warn(f"LOWER level to {level}")
         my_level = level
-    
+
     # Setup multiplexer if needed
     # We need mux if we have both a local agent (temp or regular) and remote agent
     local_agent_sock = None
@@ -615,11 +615,11 @@ def use_existing_connection(
             current_sock = os.environ["SSH_AUTH_SOCK"]
             if current_sock != sca_ssh_auth_sock and current_sock != mux_ssh_auth_sock:
                 local_agent_sock = current_sock
-    
+
     # Expand socket paths before checking
     expanded_sca_sock = str(expand_path(sca_ssh_auth_sock))
     expanded_mux_sock_check = str(expand_path(mux_ssh_auth_sock))
-    
+
     # Check if mux socket is already working - if so, reuse it directly
     if verify_socket_working(expanded_mux_sock_check):
         log_info("Reusing existing SSH agent multiplexer (no new process started)")
@@ -629,11 +629,11 @@ def use_existing_connection(
         needs_mux_setup = True
     else:
         needs_mux_setup = False
-    
+
     if needs_mux_setup:
         log_info("Setting up multiplexer for local agent + remote agent")
         org_sock_for_mux = local_agent_sock
-        
+
         try:
             mux_result = setup_python_multiplexer(
                 playbook_dir,
@@ -654,10 +654,10 @@ def use_existing_connection(
                 "started_mux_pid": None,
                 "ssh_auth_sock": sca_ssh_auth_sock
             }
-        
+
         mux_pid = omux_pid
         _started_mux_pid = omux_pid  # Track that we started this process
-        
+
         if not skip_symlink:
             omux_expanded = expand_path(omux_socket)
             target_expanded = expand_path(mux_ssh_auth_sock)
@@ -685,17 +685,17 @@ def use_existing_connection(
                         log_debug(f"Created symlink: {target_expanded} -> {omux_socket}")
                 except OSError as e:
                     log_debug(f"Could not create symlink: {e}")
-        
+
         os.environ["ORG_MUX_SSH_AUTH_SOCK"] = omux_socket
         # Use expanded path for environment variable
         expanded_mux_sock = str(expand_path(mux_ssh_auth_sock))
         os.environ["SSH_AUTH_SOCK"] = expanded_mux_sock
-    
+
     # Use the multiplexed socket if available, otherwise use remote agent
     # Expand paths before checking
     expanded_mux_sock = str(expand_path(mux_ssh_auth_sock))
     expanded_sca_sock = str(expand_path(sca_ssh_auth_sock))
-    
+
     if verify_socket_working(expanded_mux_sock):
         log_info(f"Using existing multiplexed SSH agent (SSH_AUTH_SOCK={expanded_mux_sock})")
         final_sock = expanded_mux_sock
@@ -708,9 +708,9 @@ def use_existing_connection(
         log_debug(f"Mux socket: {expanded_mux_sock} (exists: {Path(expanded_mux_sock).exists()})")
         log_debug(f"Remote socket: {expanded_sca_sock} (exists: {Path(expanded_sca_sock).exists()})")
         sys.exit(1)
-    
+
     os.environ["SSH_AUTH_SOCK"] = final_sock
-    
+
     # Show available keys
     log_info(f"Verifying with: 'SSH_AUTH_SOCK={final_sock} ssh-add -l'")
     try:
@@ -725,7 +725,7 @@ def use_existing_connection(
             log_info(line)
     except Exception:
         pass
-    
+
     # Return None for PIDs since we didn't start them (they're from existing connection)
     return {
         "my_level": my_level,
@@ -740,11 +740,11 @@ def use_existing_connection(
 def main():
     """Main entry point."""
     global sca_exiting, ssh_pid, mux_pid, temp_agent_pid, temp_agent_sock, _started_ssh_pid, _started_mux_pid
-    
+
     # Set up signal handlers
     signal.signal(signal.SIGINT, cleanup_handler)
     signal.signal(signal.SIGTERM, cleanup_handler)
-    
+
     # Get configuration from environment (set by Ansible-generated script)
     # Resolve playbook_dir to absolute path - if not set, use directory containing this module
     playbook_dir_env = os.environ.get("PLAYBOOK_DIR", "")
@@ -759,13 +759,13 @@ def main():
         else:
             # Fallback to current directory
             playbook_dir = str(Path.cwd().resolve())
-    
+
     ssh_config_file = os.environ.get("SSH_CONFIG_FILE", "config")
     sca_ssh_auth_sock = os.environ.get("SCA_SSH_AUTH_SOCK", str(Path.home() / ".ssh" / "scadev-agent.sock"))
     mux_ssh_auth_sock = os.environ.get("MUX_SSH_AUTH_SOCK", str(Path.home() / ".ssh" / "scadev-mux.sock"))
     rusername = os.environ.get("RUSERNAME", "")
     org_ssh_auth_sock = os.environ.get("ORG_SSH_AUTH_SOCK", os.environ.get("SSH_AUTH_SOCK", ""))
-    
+
     # If RUSERNAME is not set, try to read from localvars.yml
     if not rusername:
         localvars_path = Path(playbook_dir) / "localvars.yml"
@@ -778,14 +778,14 @@ def main():
                             break
             except Exception:
                 pass
-    
+
     # Validate rusername
     if not rusername:
         from .logging_utils import log_error
         log_error("RUSERNAME not set. Set it in environment or localvars.yml")
         log_error("Example: export RUSERNAME=wb")
         sys.exit(1)
-    
+
     # Parse CLI arguments using argparse
     if cli and hasattr(cli, 'cli_main'):
         try:
@@ -795,17 +795,17 @@ def main():
         except SystemExit:
             # CLI handled the command (--list, --find, --add, --kill, --help)
             return
-    
+
     # Get options from environment (set by CLI)
     reverse = os.environ.get("REVERSE") == "1"
     level_str = os.environ.get("LEVEL")
     level = int(level_str) if level_str else MAX_LEVEL
     ssh_args = os.environ.get("SSH_ARGS", "")
-    
+
     # Check for existing connections
     conn_status = check_existing_connections(sca_ssh_auth_sock, mux_ssh_auth_sock)
     my_socks_working = conn_status["working"]
-    
+
     # Validate local agent
     try:
         agent_info = validate_local_agent(org_ssh_auth_sock)
@@ -816,7 +816,7 @@ def main():
     except RuntimeError as e:
         log_error(str(e))
         sys.exit(1)
-    
+
     # Setup connection
     if not my_socks_working:
         result = setup_new_connection(
@@ -835,12 +835,12 @@ def main():
             org_ssh_auth_sock, rusername,
             reverse, level
         )
-    
+
     my_level = result["my_level"]
     ssh_pid = result.get("ssh_pid")
     mux_pid = result.get("mux_pid")
     final_ssh_auth_sock = result["ssh_auth_sock"]
-    
+
     # Update ownership tracking from result (only if we started the processes)
     started_ssh = result.get("started_ssh_pid")
     started_mux = result.get("started_mux_pid")
@@ -848,7 +848,7 @@ def main():
         _started_ssh_pid = started_ssh
     if started_mux is not None:
         _started_mux_pid = started_mux
-    
+
     # Set environment variables
     os.environ["SCA_SSH_AUTH_SOCK"] = sca_ssh_auth_sock
     os.environ["MUX_SSH_AUTH_SOCK"] = mux_ssh_auth_sock
@@ -856,10 +856,10 @@ def main():
     os.environ["SCA_USER"] = rusername
     os.environ["SCA_JUMPHOST"] = f"sca-jump-level{my_level}"
     os.environ["SCA_LEVEL"] = str(my_level)
-    
+
     logname = os.environ.get("LOGNAME", os.environ.get("USER", ""))
     log_success(f"Hello {rusername}({logname}) you are level {my_level} and using sca-jump-level{my_level}")
-    
+
     # Execute command or start shell
     execute_command_or_shell(
         playbook_dir, ssh_config_file,

@@ -26,18 +26,18 @@ def _should_use_colors() -> bool:
     # Skip if explicitly disabled
     if os.environ.get("NO_COLOR"):
         return False
-    
+
     # Skip if TERM is "dumb"
     term = os.environ.get("TERM", "")
     if term == "dumb":
         return False
-    
+
     # Use colors if:
     # - stderr is a TTY (interactive terminal), OR
     # - FORCE_COLOR is explicitly set
     if os.environ.get("FORCE_COLOR") == "1":
         return True
-    
+
     # Check if stderr is a TTY
     return sys.stderr.isatty()
 
@@ -46,7 +46,7 @@ def _colorize(text: str, color: str, bold: bool = False) -> str:
     """Apply color to text if colors are enabled."""
     if not _should_use_colors():
         return text
-    
+
     # Use ANSI codes directly
     bold_code = Colors.BOLD if bold else ""
     reset = Colors.RESET
@@ -154,11 +154,11 @@ def highlight_line(line: str) -> str:
         keyword = host_match.group(2)
         values = host_match.group(3)
         return f"{indent}{color_host()}{keyword}{color_reset()} {color_value()}{values}{color_reset()}"
-    
+
     # Comment lines (gray/dim)
     if re.match(r'^\s*#', line):
         return f"{color_comment()}{line}{color_reset()}"
-    
+
     # Directives with values (cyan directive, yellow value)
     directive_match = re.match(r'^(\s+)([A-Za-z][A-Za-z0-9]*)\s+(.+)$', line)
     if directive_match:
@@ -166,6 +166,6 @@ def highlight_line(line: str) -> str:
         directive = directive_match.group(2)
         value = directive_match.group(3)
         return f"{indent}{color_directive()}{directive}{color_reset()} {color_value()}{value}{color_reset()}"
-    
+
     # Default: just return the line
     return line

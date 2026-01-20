@@ -51,7 +51,7 @@ class _WindowsNamedPipeSocket:
     def __init__(self, handle):
         self.handle = handle
         self._closed = False
-    
+
     def sendall(self, data):
         """Send all data through the named pipe."""
         if self._closed:
@@ -60,7 +60,7 @@ class _WindowsNamedPipeSocket:
             win32file.WriteFile(self.handle, data)
         except Exception as e:
             raise socket.error(f"Write error: {e}")
-    
+
     def recv(self, bufsize):
         """Receive data from the named pipe."""
         if self._closed:
@@ -72,7 +72,7 @@ class _WindowsNamedPipeSocket:
             if "EOF" in str(e) or "broken pipe" in str(e).lower():
                 return b""
             raise socket.error(f"Read error: {e}")
-    
+
     def close(self):
         """Close the named pipe."""
         if not self._closed:
@@ -81,12 +81,13 @@ class _WindowsNamedPipeSocket:
             except Exception:
                 pass
             self._closed = True
-    
+
     def __enter__(self):
         return self
-    
+
     def __exit__(self, *args):
         self.close()
+
 
 LOG = logging.getLogger(__name__)
 mypid = 0
@@ -188,7 +189,7 @@ class UpstreamSocketThread(threading.Thread):
                     pipe_name = self._socket_path
                     if pipe_name.startswith("\\\\.\\pipe\\"):
                         pipe_name = pipe_name[9:]  # Remove \\.\pipe\
-                    
+
                     # Open named pipe
                     handle = win32file.CreateFile(
                         f"\\\\.\\pipe\\{pipe_name}",
@@ -273,22 +274,22 @@ class BaseAgentRequestHandler(socketserver.BaseRequestHandler):
         """
         if not key_blob or len(key_blob) < 4:
             return {"key_type": "unknown", "key_size": 0, "error": "Invalid key blob"}
-        
+
         # Ensure key_blob is bytes
         if isinstance(key_blob, str):
             key_blob = key_blob.encode('latin1')  # SSH blobs use binary data
-        
+
         try:
             # First 4 bytes are length of key type string
             key_type_len = struct.unpack('>I', key_blob[0:4])[0]
             if len(key_blob) < 4 + key_type_len:
                 return {"key_type": "unknown", "key_size": 0, "error": "Truncated key blob"}
-            
+
             # Extract key type string
             key_type = key_blob[4:4+key_type_len].decode('ascii')
-            
+
             key_info = {"key_type": key_type, "key_size": 0}
-            
+
             # Parse key-specific parameters
             if key_type == "ssh-rsa":
                 key_info.update(self._parse_rsa_key_blob(key_blob, 4 + key_type_len))
@@ -298,9 +299,9 @@ class BaseAgentRequestHandler(socketserver.BaseRequestHandler):
                 key_info.update(self._parse_ed25519_key_blob(key_blob, 4 + key_type_len))
             else:
                 key_info["key_size"] = len(key_blob) * 8  # Rough estimate
-            
+
             return key_info
-            
+
         except Exception as e:
             return {"key_type": "unknown", "key_size": 0, "error": str(e)}
 
@@ -310,20 +311,20 @@ class BaseAgentRequestHandler(socketserver.BaseRequestHandler):
             # Skip exponent length and exponent
             if offset + 4 > len(key_blob):
                 return {"key_size": 0, "error": "Invalid RSA key blob"}
-            
+
             e_len = struct.unpack('>I', key_blob[offset:offset+4])[0]
             offset += 4 + e_len
-            
+
             # Get modulus length
             if offset + 4 > len(key_blob):
                 return {"key_size": 0, "error": "Invalid RSA key blob"}
-            
+
             n_len = struct.unpack('>I', key_blob[offset:offset+4])[0]
             # RSA key size is the modulus length in bits
             key_size = n_len * 8
-            
+
             return {"key_size": key_size}
-            
+
         except Exception as e:
             return {"key_size": 0, "error": str(e)}
 
@@ -333,23 +334,23 @@ class BaseAgentRequestHandler(socketserver.BaseRequestHandler):
             # Extract curve name
             if offset + 4 > len(key_blob):
                 return {"key_size": 0, "error": "Invalid ECDSA key blob"}
-            
+
             curve_len = struct.unpack('>I', key_blob[offset:offset+4])[0]
             if offset + 4 + curve_len > len(key_blob):
                 return {"key_size": 0, "error": "Invalid ECDSA key blob"}
-            
+
             curve_name = key_blob[offset+4:offset+4+curve_len].decode('ascii')
-            
+
             # Map curve names to key sizes
             curve_sizes = {
                 "nistp256": 256,
                 "nistp384": 384,
                 "nistp521": 521
             }
-            
+
             key_size = curve_sizes.get(curve_name, 0)
             return {"key_size": key_size, "curve": curve_name}
-            
+
         except Exception as e:
             return {"key_size": 0, "error": str(e)}
 
@@ -363,7 +364,7 @@ class BaseAgentRequestHandler(socketserver.BaseRequestHandler):
         Simple key info extraction that works reliably
         """
         key_info = {"key_type": "unknown", "key_size": 0}
-        
+
         # Simple key type extraction
         try:
             if len(key_blob) >= 4:
@@ -371,9 +372,9 @@ class BaseAgentRequestHandler(socketserver.BaseRequestHandler):
                 if len(key_blob) >= 4 + key_type_len:
                     key_type = key_blob[4:4+key_type_len].decode('ascii')
                     key_info["key_type"] = key_type
-        except:
+        except Exception:
             pass
-        
+
         # Simple comment parsing
         if key_comment:
             try:
@@ -382,9 +383,9 @@ class BaseAgentRequestHandler(socketserver.BaseRequestHandler):
                 else:
                     comment_str = str(key_comment)
                 key_info["comment"] = comment_str
-            except:
+            except Exception:
                 key_info["comment"] = ""
-        
+
         return key_info
 
     def _extract_key_info(self, key_blob, key_comment=None):
@@ -392,16 +393,16 @@ class BaseAgentRequestHandler(socketserver.BaseRequestHandler):
         Extract comprehensive key information including type, size, and fingerprints
         """
         key_info = self._parse_key_blob(key_blob)
-        
+
         # Add fingerprints
         key_info["md5_fingerprint"] = self._key_digest(key_blob)
         key_info["sha256_fingerprint"] = self._key_digest_sha256(key_blob)
-        
+
         # Parse comment if provided
         if key_comment:
             comment_info = self._parse_key_comment(key_comment)
             key_info.update(comment_info)
-        
+
         return key_info
 
     def _parse_key_comment(self, key_comment):
@@ -410,12 +411,12 @@ class BaseAgentRequestHandler(socketserver.BaseRequestHandler):
         """
         if not key_comment:
             return {"username": None, "hostname": None, "comment": ""}
-        
+
         try:
             comment_str = key_comment.decode('utf-8') if isinstance(key_comment, bytes) else key_comment
         except UnicodeDecodeError:
             comment_str = str(key_comment)
-        
+
         # Look for user@hostname pattern
         if '@' in comment_str:
             parts = comment_str.split('@', 1)
@@ -423,7 +424,7 @@ class BaseAgentRequestHandler(socketserver.BaseRequestHandler):
                 username = parts[0].strip()
                 hostname = parts[1].strip()
                 return {"username": username, "hostname": hostname, "comment": comment_str}
-        
+
         # If no @ found, treat entire comment as description
         return {"username": None, "hostname": None, "comment": comment_str}
 
@@ -452,7 +453,7 @@ class BaseAgentRequestHandler(socketserver.BaseRequestHandler):
             key_comment = response[offset:offset + key_comment_len]
             offset += key_comment_len
 
-            yield(key_blob, key_comment)
+            yield (key_blob, key_comment)
 
     def _build_identities_answer(self, identities):
         """
@@ -607,39 +608,39 @@ class AgentMultiplexerRequestHandler(BaseAgentRequestHandler):
                 response = self._handle_extension(request)
             elif r_type == self.SSH2_AGENTC_SIGN_REQUEST:
                 LOG.debug(msg="SSH2_AGENTC_SIGN_REQUEST")
-                
+
                 # Parse the sign request according to SSH agent protocol
                 # Format: byte(type) + string(key_blob) + string(data) + uint32(flags)
                 try:
                     offset = 5  # Skip message length and type
-                    
+
                     # Extract key blob
                     key_blob_len = struct.unpack_from('> I', request, offset)[0]
                     offset += 4
                     key_blob = request[offset:offset + key_blob_len]
                     offset += key_blob_len
-                    
+
                     # Extract data to be signed
                     data_len = struct.unpack_from('> I', request, offset)[0]
                     offset += 4
-                    data = request[offset:offset + data_len]
+                    # data = request[offset:offset + data_len]  # Data extracted but not used directly
                     offset += data_len
-                    
+
                     # Extract flags if present
                     flags = 0
                     if offset + 4 <= len(request):
                         flags = struct.unpack_from('> I', request, offset)[0]
-                    
+
                     # Get key information from cache or analyze now
                     hex_blob = ''.join('{:02x}'.format(b) for b in key_blob)
                     key_info = self._keys_cache.get(hex_blob)
                     if not key_info:
                         try:
                             key_info = self._extract_key_info(key_blob)
-                        except:
+                        except Exception:
                             # Fallback to simple extraction
                             key_info = self._extract_key_info_simple(key_blob)
-                    
+
                     # Determine which agent to use
                     agent = self._identity_map.get(hex_blob)
                     if agent is None:
@@ -653,7 +654,7 @@ class AgentMultiplexerRequestHandler(BaseAgentRequestHandler):
                         response = UpstreamSocketThread.SSH_AGENT_FAILURE
                     else:
                         agent_name = "default" if agent == self.server.default_agent else "alternate"
-                        
+
                         # Log detailed sign request information
                         log_data = {
                             "operation": "sign_request",
@@ -666,11 +667,11 @@ class AgentMultiplexerRequestHandler(BaseAgentRequestHandler):
                             "username": key_info.get("username"),
                             "hostname": key_info.get("hostname")
                         }
-                        
+
                         # Add curve info for ECDSA keys
                         if "curve" in key_info:
                             log_data["curve"] = key_info["curve"]
-                        
+
                         # Add flag interpretation
                         flag_info = []
                         if flags & 0x01:  # SSH_AGENT_RSA_SHA2_256
@@ -679,13 +680,13 @@ class AgentMultiplexerRequestHandler(BaseAgentRequestHandler):
                             flag_info.append("RSA_SHA2_512")
                         if flag_info:
                             log_data["flag_names"] = flag_info
-                        
+
                         # Create human-readable log message with better key identification
                         key_desc = f"{key_info.get('key_type', 'unknown')}"
                         if key_info.get('key_size', 0) > 0:
                             key_desc += f" {key_info['key_size']}-bit"
-                        
-                        # Get user info from comment 
+
+                        # Get user info from comment
                         user_info = ""
                         if key_info.get("comment"):
                             comment = key_info["comment"]
@@ -695,22 +696,22 @@ class AgentMultiplexerRequestHandler(BaseAgentRequestHandler):
                             user_info = f" ({comment})"
                         elif key_info.get("username") and key_info.get("hostname"):
                             user_info = f" ({key_info['username']}@{key_info['hostname']})"
-                        
-                        LOG.info("Sign: %s key from %s agent%s", 
-                                key_desc, agent_name, user_info)
-                        
+
+                        LOG.info("Sign: %s key from %s agent%s",
+                                 key_desc, agent_name, user_info)
+
                         # Forward request to appropriate agent
                         response = agent.forward_request(request)
-                        
+
                         # Log response info
                         if response and len(response) > 4:
                             response_type = struct.unpack_from('> B', response, 4)[0]
                             success = response_type != 5  # SSH_AGENT_FAILURE = 5
-                            
+
                             if not success:
-                                LOG.warning("SSH sign failed for %s key from %s agent", 
-                                           key_info.get("key_type", "unknown"), agent_name)
-                        
+                                LOG.warning("SSH sign failed for %s key from %s agent",
+                                            key_info.get("key_type", "unknown"), agent_name)
+
                 except Exception as e:
                     LOG.error("SSH_AGENT_ERROR: %s", json.dumps({
                         "operation": "sign_request_parse_error",
@@ -729,22 +730,22 @@ class AgentMultiplexerRequestHandler(BaseAgentRequestHandler):
         response, keep track of where we found each identity
         """
         LOG.debug("DEBUG: _merge_identities called")
-        
+
         # On first request, do startup key discovery using this handler
         if not self.server.startup_keys_discovered:
             self.server.startup_keys_discovered = True
             self._discover_startup_keys()
-        
+
         identities = []
         agent_counts = {}
-        
+
         for agent in self.server.agents():
             response = agent.forward_request(request)
             agent_name = "default" if agent == self.server.default_agent else "alternate"
             agent_identities = []
-            
+
             LOG.debug("DEBUG: Processing agent %s", agent_name)
-            
+
             identities_list = list(self._parse_identities(response))
             LOG.debug("DEBUG: Found %d identities from %s agent", len(identities_list), agent_name)
 
@@ -752,7 +753,7 @@ class AgentMultiplexerRequestHandler(BaseAgentRequestHandler):
                 try:
                     # Use simple key information extraction
                     key_info = self._extract_key_info_simple(key_blob, key_comment)
-                    
+
                     # Record where each identity came from
                     try:
                         hex_blob = ''.join('{:02x}'.format(b) for b in key_blob)
@@ -762,36 +763,36 @@ class AgentMultiplexerRequestHandler(BaseAgentRequestHandler):
                         hex_blob = str(hash(str(key_blob)))[:16]
                     if hex_blob in self._identity_map and \
                             self._identity_map[hex_blob] != agent:
-                        LOG.error("Identity collision: %s found in both %s and %s agents", 
-                                  key_info.get('sha256_fingerprint', 'unknown'), agent_name, 
+                        LOG.error("Identity collision: %s found in both %s and %s agents",
+                                  key_info.get('sha256_fingerprint', 'unknown'), agent_name,
                                   "default" if self._identity_map[hex_blob] == self.server.default_agent else "alternate")
 
                     self._identity_map[hex_blob] = agent
-                    
+
                     # Store key info for later use in sign requests
                     self._keys_cache[hex_blob] = key_info
-                    
+
                     # Log individual key discovery (only once per server session, skip if already logged on startup)
                     key_fingerprint = hex_blob[:16]  # Use hex blob as fingerprint
                     if key_fingerprint not in self.server.logged_keys and "startup_logged" not in self.server.logged_keys:
                         self.server.logged_keys.add(key_fingerprint)
-                        
+
                         key_desc = f"{key_info.get('key_type', 'unknown')}"
-                        
+
                         user_info = ""
                         if key_info.get("comment"):
                             user_info = f"({key_info['comment']})"
-                        
+
                         LOG.debug("DEBUG: About to log key discovery")
                         LOG.info("Found %s key in %s agent %s", key_desc, agent_name, user_info)
                         LOG.debug("DEBUG: Logged key discovery")
-                    
+
                     agent_identities.append(key_info)
-                    
+
                 except Exception as e:
                     # If key analysis fails, fall back to basic logging
                     LOG.debug("Key analysis failed for identity: %s", str(e))
-                    
+
                     # Ensure key_blob is bytes for hex conversion
                     if isinstance(key_blob, str):
                         blob_bytes = key_blob.encode('latin1')
@@ -799,14 +800,14 @@ class AgentMultiplexerRequestHandler(BaseAgentRequestHandler):
                         blob_bytes = key_blob
                     hex_blob = ''.join('{:02x}'.format(b) for b in blob_bytes)
                     self._identity_map[hex_blob] = agent
-                    
+
                     # Try to at least get the key type from the blob
                     try:
                         if len(key_blob) >= 4:
                             key_type_len = struct.unpack('>I', key_blob[0:4])[0]
                             if len(key_blob) >= 4 + key_type_len:
                                 key_type = key_blob[4:4+key_type_len].decode('ascii')
-                                
+
                                 # Try to get comment info too
                                 comment_str = ""
                                 if key_comment:
@@ -815,9 +816,9 @@ class AgentMultiplexerRequestHandler(BaseAgentRequestHandler):
                                             comment_str = key_comment.decode('utf-8')
                                         else:
                                             comment_str = str(key_comment)
-                                    except:
+                                    except Exception:
                                         comment_str = ""
-                                
+
                                 # Log the fallback discovery (only once per key, skip if already logged on startup)
                                 key_id = f"{agent_name}_{key_type}_{blob_bytes[:4].hex()}"
                                 if key_id not in self.server.logged_keys and "startup_logged" not in self.server.logged_keys:
@@ -835,9 +836,9 @@ class AgentMultiplexerRequestHandler(BaseAgentRequestHandler):
                                             user_info = f" ({comment_str})"
                                     else:
                                         user_info = ""
-                                    LOG.info("Found %s key in %s agent %s", 
-                                            key_type, agent_name, user_info)
-                                
+                                    LOG.info("Found %s key in %s agent %s",
+                                             key_type, agent_name, user_info)
+
                                 # Store fallback key info for later use
                                 fallback_key_info = {
                                     "key_type": key_type,
@@ -864,31 +865,31 @@ class AgentMultiplexerRequestHandler(BaseAgentRequestHandler):
                             self.server.logged_keys.add(key_id)
                             LOG.info("Found unknown key in %s agent (parse error: %s)", agent_name, str(e2))
                         agent_identities.append({"key_type": "unknown"})
-                
+
                 # Always add the identity regardless of analysis success
                 identity = (key_blob, key_comment)
                 identities.append(identity)
 
             agent_counts[agent_name] = len(agent_identities)
-            
+
             # Summary logging removed for cleaner output
 
         # Log summary only on first call or when counts change
         default_count = agent_counts.get("default", 0)
         alternate_count = agent_counts.get("alternate", 0)
         total_count = len(identities)
-        
+
         summary_key = (total_count, default_count, alternate_count)
         if self.server.last_summary != summary_key:
             self.server.last_summary = summary_key
-            LOG.info("Agent: %d identities available (%d local, %d remote)", 
+            LOG.info("Agent: %d identities available (%d local, %d remote)",
                      total_count, default_count, alternate_count)
 
         return self._build_identities_answer(identities)
 
     def _handle_extension(self, request):
         return self.server.default_agent.forward_request(request)
-    
+
     def _discover_startup_keys(self):
         """
         Discover and log all available keys on startup
@@ -896,62 +897,63 @@ class AgentMultiplexerRequestHandler(BaseAgentRequestHandler):
         try:
             # Create a REQUEST_IDENTITIES message to query agents
             request_identities_msg = bytearray(struct.pack('> I B', 1, 11))  # SSH2_AGENTC_REQUEST_IDENTITIES = 11
-            
+
             total_keys = 0
             agent_counts = {}
-            
+
             for agent in self.server.agents():
                 agent_name = "default" if agent == self.server.default_agent else "alternate"
                 agent_keys = 0
-                
+
                 # Try to query the agent
                 try:
                     response = agent.forward_request(request_identities_msg)
-                    
+
                     # Parse identities using the existing method
                     identities_list = list(self._parse_identities(response))
-                    
+
                     for key_blob, key_comment in identities_list:
                         try:
                             # Use simple key information extraction
                             key_info = self._extract_key_info_simple(key_blob, key_comment)
-                            
+
                             key_desc = f"{key_info.get('key_type', 'unknown')}"
-                            
+
                             user_info = ""
                             if key_info.get("comment"):
                                 user_info = f" ({key_info['comment']})"
-                            
+
                             LOG.info("Found %s key in %s agent%s", key_desc, agent_name, user_info)
                             agent_keys += 1
                             total_keys += 1
-                            
+
                         except Exception as e:
                             LOG.debug("Failed to analyze key on startup: %s", str(e))
                             LOG.info("Found unknown key in %s agent", agent_name)
                             agent_keys += 1
                             total_keys += 1
-                    
+
                     agent_counts[agent_name] = agent_keys
-                    
+
                 except Exception as e:
                     LOG.debug("Failed to query %s agent on startup: %s", agent_name, str(e))
                     agent_counts[agent_name] = 0
-            
+
             # Only log summary if we found keys
             if total_keys > 0:
                 # Log summary
                 default_count = agent_counts.get("default", 0)
                 alternate_count = agent_counts.get("alternate", 0)
-                LOG.info("Agent: %d identities available (%d local, %d remote)", 
+                LOG.info("Agent: %d identities available (%d local, %d remote)",
                          total_keys, default_count, alternate_count)
-                
+
                 # Mark all keys as logged so they don't appear again in first request
                 self.server.logged_keys.add("startup_logged")
                 self.server.last_summary = (total_keys, default_count, alternate_count)
-            
+
         except Exception as e:
             LOG.debug("Startup key discovery failed: %s", str(e))
+
 
 class AgentMultiplexer(socketserver.ThreadingUnixStreamServer):
     timeout = 3
@@ -967,11 +969,11 @@ class AgentMultiplexer(socketserver.ThreadingUnixStreamServer):
         self.default_agent.start()
         self.alternate_agent = UpstreamSocketThread(alternate_agent_sock)
         self.alternate_agent.start()
-        
+
         # Server-wide state to track logged keys across all requests
         self.logged_keys = set()
         self.last_summary = None
-        
+
         # Server-wide state will be initialized, startup key discovery will be done on first request
         self.startup_keys_discovered = False
 
@@ -1012,7 +1014,7 @@ def start_agent_mux(ready_pipeout, parent_pid, upstream_socket,
         LOG.error("Windows server support not fully implemented")
         LOG.error("The multiplexer server requires Unix sockets or a Windows named pipe server implementation")
         raise NotImplementedError("Windows server support requires additional implementation")
-    
+
     server = AgentMultiplexer(sock_path, upstream_socket, alternative_socket)
 
     # Let parent know the socket is ready
@@ -1048,7 +1050,7 @@ def socket_working(sock):
     """
     if not sock:
         return False
-    
+
     # Windows named pipe check
     if sys.platform == "win32" and (sock.startswith("\\\\.\\pipe\\") or sock.startswith("\\\\")):
         if HAS_WIN32:
@@ -1073,7 +1075,7 @@ def socket_working(sock):
             # Without pywin32, we can't properly check Windows named pipes
             # Return True optimistically (caller should handle errors)
             return True
-    
+
     # Unix socket check - use original logic for compatibility
     try:
         r = os.path.realpath(sock)
