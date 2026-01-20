@@ -44,9 +44,6 @@ Host sca-jmp-level0 jmp0 jmp-level0 jump-level0 L0-sca-magic-jump
 	ForwardAgent no
 	#IdentityAgent $LOCAL_SSH_AUTH_SOCK
 	IdentityAgent {{ mux_auth_sock }}
-{% if my_ssh_key is defined and my_ssh_key != '~/.ssh/id_unused' %}
-	IdentityFile {{ my_ssh_key }}
-{% endif %}
 	#BatchMode yes
 	ExitOnForwardFailure yes
 	ConnectTimeout 1
@@ -66,9 +63,6 @@ Host sca-jmp-level1 jmp1 jmp-level1 jump-level1 L1-sca-magic-jump
 	#IdentityAgent none
 	#IdentityAgent $ORG_SSH_AUTH_SOCK
 	IdentityAgent {{ mux_auth_sock }}
-{% if my_ssh_key is defined and my_ssh_key != '~/.ssh/id_unused' %}
-	IdentityFile {{ my_ssh_key }}
-{% endif %}
 	SendEnv STY_*
 	SetEnv STY_LOCALUSER={{ remote_username }}
 	#ProxyJump sca-jmp-level0
@@ -86,9 +80,6 @@ Host sca-jmp-level2 jmp2 jmp-level2 jump-level2 L2-sca-magic-jump
 	#IdentityAgent none
 	#IdentityAgent $ORG_SSH_AUTH_SOCK
 	IdentityAgent {{ mux_auth_sock }}
-{% if my_ssh_key is defined and my_ssh_key != '~/.ssh/id_unused' %}
-	IdentityFile {{ my_ssh_key }}
-{% endif %}
 	SendEnv STY_*
 	SetEnv STY_LOCALUSER={{ remote_username }}
 	#ProxyJump sca-jmp-level0
@@ -106,9 +97,6 @@ Host sca-jmp-level3 jmp3 jmp-level3 jump-level3 L3-sca-magic-jump
 	#IdentityAgent none
 	#IdentityAgent $ORG_SSH_AUTH_SOCK
 	IdentityAgent {{ mux_auth_sock }}
-{% if my_ssh_key is defined and my_ssh_key != '~/.ssh/id_unused' %}
-	IdentityFile {{ my_ssh_key }}
-{% endif %}
 	SendEnv STY_*
 	SetEnv STY_LOCALUSER={{ remote_username }}
 	#ProxyJump sca-jmp-level0
@@ -119,9 +107,6 @@ Host sca-jmp-level0 jmp0 jmp-level0 jump-level0 L0-sca-magic-jump
 	Port {{ sca_key_server_port }}
 	ForwardAgent no
 	IdentityAgent {{ mux_auth_sock }}
-{% if my_ssh_key is defined and my_ssh_key != '~/.ssh/id_unused' %}
-	IdentityFile {{ my_ssh_key }}
-{% endif %}
 	#BatchMode yes
 	ExitOnForwardFailure yes
 	ConnectTimeout 1
