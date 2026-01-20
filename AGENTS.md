@@ -73,12 +73,36 @@ This is the primary tool for interaction. It creates a subshell with `SSH_AUTH_S
 
 # Kill all agents and remote connections
 ./sca --kill
+
+# Use Rust multiplexer (if installed)
+./sca --mux=rust
+
+# Use Python multiplexer (default)
+./sca --mux=python
 ```
+
+**Note**: The system automatically multiplexes temporary agents (created from identity files) with the remote agent when both are available. This ensures that both local and remote keys are available through the multiplexed socket.
 
 ### Configuration Management
 **Important**: The `config` file is generated. Never edit it directly.
 1.  **Modify**: Edit `playbook.yml`, `localvars.yml`, files in `hosts/`, or templates in `templates/`.
 2.  **Apply**: Run `ansible-playbook playbook.yml` to regenerate the configuration.
+
+### Custom SSH Key for SCA Connections
+
+You can specify a custom SSH key to use for connecting to the SCA system (the `sca-key` host) by setting `my_ssh_key` in `localvars.yml`:
+
+```yaml
+# In localvars.yml
+my_ssh_key: ~/.ssh/id_ed25519_wb
+```
+
+This key will be:
+- Used for the initial connection to the SCA key server (`sca-key` host)
+- Automatically detected by `find_identity_file()` if no local agent is found
+- Only used for `sca-key`, not for jump hosts (which use the multiplexed agent)
+
+**Recommendation**: Use a dedicated key for SCA connections (not your default `id_ed25519` or `id_rsa`) to avoid frequent passphrase prompts, since this key is only needed for the initial connection to the SCA system.
 
 ### Adding a New Host
 1.  Create or edit a file in `hosts/`.
@@ -103,11 +127,14 @@ Key environment variables used throughout the system:
 -   All connections route through controlled jump hosts.
 
 ### Debugging
--   **Verbose Output**: Use `./sca --debug` to see script execution flow.
+-   **Verbose Output**: Use `./sca --debug` or `./sca -d` to see script execution flow.
 -   **Agent Status**: Check `ssh-add -l` inside the subshell to see available keys.
 -   **Socket Check**: Monitor socket files in `~/.ssh/scadev-*`.
 -   **Multiplexer Logs**: `sshagentmux.py` logs to stderr. Check for "SSH_AGENT_ERROR" or signing failures.
 -   **SSH Config Test**: `ssh -F config -T <hostname>`
+-   **Identity File Detection**: If no local agent is found, the script automatically looks for identity files. It checks:
+    1. The key specified in `my_ssh_key` from the SSH config (if set in `localvars.yml`)
+    2. Standard locations: `~/.ssh/id_ed25519`, `~/.ssh/id_rsa`, `~/.ssh/id_ecdsa`
 
 ## Deep Dive: sshagentmux.py
 

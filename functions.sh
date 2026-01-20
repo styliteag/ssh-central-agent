@@ -1612,7 +1612,7 @@ Options:
                            local:  Use local SSH agent only
                            remote: Use remote SSH agent only (default)
                            mux:    Use multiplexed agent (combines local + remote)
-  --mux=python|rust|none  Choose multiplexer type (default: python)
+  --mux=python|rust       Choose multiplexer type (default: python)
                            python: Use Python multiplexer (sshagentmux.py)
                            rust:   Use Rust multiplexer (ssh-agent-mux)
                            none:   Skip multiplexer, use remote agent only
@@ -1630,7 +1630,6 @@ Examples:
   $SCA_SCRIPT --key=local                    # Start subshell with local key
   $SCA_SCRIPT --key=remote                   # Start subshell with remote key (default)
   $SCA_SCRIPT --key=mux                      # Start subshell with multiplexed agent
-  $SCA_SCRIPT --mux=none                     # Use remote agent only (no multiplexer)
   eval \`$SCA_SCRIPT -e --key=local\`         # Set SSH_AUTH_SOCK in current shell
   $SCA_SCRIPT --list                          # List all configured hosts
   $SCA_SCRIPT --find myserver                 # Find host 'myserver'
@@ -1639,7 +1638,6 @@ Examples:
   $SCA_SCRIPT --key=local --ssh user@host     # Connect using local agent
   $SCA_SCRIPT --key=remote -- -p9922 root@192.168.178.100 ls  # Connect with SSH options and run 'ls' command
   $SCA_SCRIPT --key=mux --ssh -p9922 host    # Connect using multiplexed agent with custom port
-  $SCA_SCRIPT --mux=none --ssh host          # Connect using remote agent only (no local keys)
   $SCA_SCRIPT --wait                          # Run in background monitoring mode
   $SCA_SCRIPT --kill                          # Clean up all agents and connections"
 
