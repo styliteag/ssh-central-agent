@@ -17,10 +17,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import argparse
 import logging
 import logging.handlers
-import multiprocessing
 import os
 import pathlib
 import socketserver
@@ -34,7 +32,6 @@ import re
 import socket
 import threading
 import queue as Queue
-import time
 import base64
 import json
 
@@ -108,6 +105,15 @@ def setup_logging(name, level=logging.DEBUG):
     formatter = logging.Formatter(fmt=FORMAT)
     handler.setFormatter(formatter)
     log.addHandler(handler)
+
+
+def run_agentmux(ready_pipeout, parent_pid, upstream_socket,
+                 alternative_socket, log_level=None):
+    """Initialize logging in child process, then start the mux."""
+    if log_level is None:
+        log_level = logging.INFO
+    setup_logging("sshagentmux", log_level)
+    start_agent_mux(ready_pipeout, parent_pid, upstream_socket, alternative_socket)
 
 
 class UpstreamSocketThread(threading.Thread):
@@ -501,15 +507,6 @@ class BaseAgentRequestHandler(socketserver.BaseRequestHandler):
                     msg_length = 4 + struct.unpack('> I', msg_buffer)[0]
 
             yield msg_buffer
-
-#    def _fetch_process_info(self):
-#        """
-#        Retrieve the command line of the process
-#        """
-#        self.process_info = 'pid={}'.format(self.peer_pid)
-#        ps_cmd = ['ps', '-o', 'args', '-ww', '-p', '{}'.format(self.peer_pid)]
-#        ps_output = subprocess.check_output(ps_cmd)
-#        self.process_info = ps_output.split('\n')[1]
 
 
 def daemonize(target=None, pidfile=None, stdin='/dev/null', stdout='/dev/null',
@@ -1097,96 +1094,3 @@ def socket_working(sock):
     else:
         LOG.error("%s no Socket", r)
         return False
-
-
-def main():
-    # fetch alternate socket path from command line
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--foreground', '-f', action='store_true',
-                        help="Start in foreground")
-    parser.add_argument('--debug', '-d', action='store_true',
-                        help="Enable debug logging")
-    parser.add_argument('--socket', required=True,
-                        help='alternative SSH agent socket')
-    parser.add_argument('--envname', default="",
-                        help='prefix of the ENV variable on stdout')
-
-    args, extra_args = parser.parse_known_args()
-
-    if extra_args and extra_args[0] == '--':
-        extra_args = extra_args[1:]
-
-    level = logging.INFO
-    if args.debug:
-        level = logging.DEBUG
-    setup_logging("sshagentmux", level)
-
-    LOG.debug("Starting sshagentmux")
-
-    # use specified socket if SSH_AUTH_SOCK is not present in environment
-    sock_path = args.socket
-
-    if socket_working(os.environ['SSH_AUTH_SOCK']):
-        if socket_working(args.socket):
-            # Both Sockets are working
-            LOG.debug("Sockets: %s and %s",
-                      os.environ['SSH_AUTH_SOCK'], args.socket)
-            upstream_socket = os.environ['SSH_AUTH_SOCK']
-            # Save original parent pid so we can detect when it exits
-            parent_pid = os.getppid()
-            if extra_args:
-                parent_pid = os.getpid()
-            # Start proxy process and wait for it to creating auth socket
-            # Using a pipe for compatibility with OpenBSD
-            ready_pipein, ready_pipeout = multiprocessing.Pipe()
-            daemonize(target=start_agent_mux,
-                      # stderr=os.path.expanduser('~/.sshagentmux.log'),
-                      # pidfile="/tmp/sshagentmux.pid",
-                      envname=args.envname,
-                      args=(ready_pipeout, parent_pid, upstream_socket,
-                            args.socket)
-                      )
-            # Wait for server to setup listening socket
-            sock_path = ready_pipein.recv()
-            ready_pipein.close()
-            ready_pipeout.close()
-            if not os.path.exists(sock_path):
-                LOG.info('Agent Multiplexer failed to create auth socket')
-                sys.exit(1)
-        else:
-            # Only SSH_AUTH_SOCK is working
-            LOG.debug("Just using SSH_AUTH_SOCK")
-            sock_path = os.environ['SSH_AUTH_SOCK']
-
-    else:
-        # SSH_AUTHSOCK is not working
-        LOG.debug("Just using %s", args.socket)
-        sock_path = args.socket
-
-    # Behave like ssh-agent(1)
-    if extra_args:
-        # start command if specified in extra_args
-        os.environ['SSH_AUTH_SOCK'] = sock_path
-        os.execvp(extra_args[0], extra_args)
-        os.kill(mypid, signal.SIGKILL)
-    else:
-        # print how to setup environment (same behavior as ssh-agent)
-        print('{:s}SSH_AUTH_SOCK={:s};export {:s}SSH_AUTH_SOCK;'
-              '{:s}SSH_AGENT_PID={:d};export {:s}SSH_AGENT_PID;'
-              .format(
-                    args.envname, sock_path, args.envname,
-                    args.envname, mypid, args.envname
-                ))
-    if args.foreground:
-        LOG.debug("Waiting for parent to exit")
-        try:
-            while check_pid(mypid):
-                time.sleep(1)
-        except KeyboardInterrupt:
-            LOG.debug("Parent interrupted")
-            os.kill(mypid, signal.SIGKILL)
-        LOG.debug("Parent exited")
-    LOG.debug("Main exited")
-
-if __name__ == '__main__':
-    main()

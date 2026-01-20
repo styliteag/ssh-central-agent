@@ -137,12 +137,20 @@ ssh-add ~/.ssh/id_ed25519
    ansible-playbook playbook.yml
    ```
 
-   This will:
-   - Generate the `sca` (SSH Central Agent) script from templates
-   - Create SSH configuration files
-   - Set up shell integration (.bashrc/.zshrc)
+  This will:
+  - Generate the Python entrypoint `sca` and the legacy bash entrypoint `sca.sh`
+  - Create SSH configuration files
+  - Set up shell integration (.bashrc/.zshrc)
 
 **Note:** The playbook automatically adapts to wherever you've checked out the repository. See [SETUP.md](SETUP.md) for detailed setup instructions.
+
+### What’s New (Python Port)
+
+The project now ships **two parallel entrypoints**:
+- **`sca`** → Python implementation (generated from `templates/sca.py.j2`)
+- **`sca.sh`** → Legacy bash implementation (generated from `templates/sca.sh.j2`)
+
+Use `sca` by default. Keep `sca.sh` only for legacy workflows or comparison.
 
 ### Usage
 
@@ -221,8 +229,6 @@ sca --kill              # Kill all agents and connections, remove socket files
 sca -d                  # Enable debug mode (verbose output)
 sca -r                  # Reverse the order of agents when multiplexing
 sca -l 2                # Set security level (0-3, default: auto-detect)
-sca --mux=rust          # Use Rust multiplexer instead of Python (default)
-sca --mux=python        # Use Python multiplexer (default)
 ```
 
 **Combined Options:**
@@ -233,74 +239,7 @@ sca --wait --key=local  # Background monitoring mode
 
 ## SSH Agent Multiplexing
 
-The system includes its own SSH agent multiplexer implementation (`sshagentmux.py`) that combines local and remote SSH agents into a single socket. Additionally, if available, the system can use the external [ssh-agent-mux](https://github.com/overhacked/ssh-agent-mux) project, which provides better performance and additional features.
-
-### Option 1: Built-in Python Multiplexer (Default)
-The project includes `sshagentmux.py`, a Python-based SSH agent multiplexer that combines your local and remote SSH agents. This is the default implementation and requires no additional dependencies beyond Python.
-
-### Option 2: ssh-agent-mux (Optional, Explicit Opt-In)
-If [ssh-agent-mux](https://github.com/overhacked/ssh-agent-mux) is installed, you can choose to use it explicitly via:
-
-```bash
-sca --mux=rust
-```
-
-This Rust-based multiplexer offers better performance, but it is **not** compatible with some older or non-standard SSH implementations (for example certain Sophos appliances). In those cases you may see errors like:
-
-```text
-[ssh_agent_lib::agent] Error handling message: Proto(SshKey(Encoding(Length)))
-```
-
-If you encounter such errors, switch back to the default Python multiplexer (no `--mux` flag, or `--mux=python`) and consider reporting the issue upstream to the `ssh-agent-mux` project to see if they can improve compatibility.
-
-**Installation:**
-```bash
-cargo install ssh-agent-mux
-```
-
-**Configuration:**
-Create `~/.config/ssh-agent-mux/ssh-agent-mux.toml`:
-```toml
-agent_sock_paths = [
-    "~/.ssh/agent.sock",           # Your local agent
-    "~/.ssh/scadev-agent.sock",    # Remote agent
-]
-listen_path = "~/.ssh/ssh-agent-mux.sock"
-log_level = "warn"
-```
-
-**Start the service:**
-```bash
-# macOS
-ssh-agent-mux --install-service
-
-# Linux
-ssh-agent-mux --install-service
-systemctl --user enable --now ssh-agent-mux.service
-```
-
-**Enable logging (macOS):**
-Edit `~/Library/LaunchAgents/net.ross-williams.ssh-agent-mux.plist` and add:
-```xml
-<key>StandardOutPath</key>
-<string>/Users/YOUR_USERNAME/Library/Logs/ssh-agent-mux.log</string>
-<key>StandardErrorPath</key>
-<string>/Users/YOUR_USERNAME/Library/Logs/ssh-agent-mux.err.log</string>
-```
-
-Then restart: `launchctl kickstart -k gui/$(id -u)/net.ross-williams.ssh-agent-mux`
-
-**View logs:**
-```bash
-# macOS (if logging configured)
-tail -f ~/Library/Logs/ssh-agent-mux.log
-
-# macOS (system log)
-log stream --predicate 'process == "ssh-agent-mux"' --level debug
-
-# Linux
-journalctl --user -u ssh-agent-mux -f
-```
+The system uses the built-in Python multiplexer (`sshagentmux.py`) to combine local and remote SSH agents into a single socket. No external multiplexer is supported.
 
 ## Shell Integration
 
@@ -345,7 +284,7 @@ See [AGENTS.md](AGENTS.md) for detailed documentation including:
 - Architecture overview
 - Configuration management
 - Debugging guide
-- Complete ssh-agent-mux setup
+- Multiplexer details (Python only)
 
 ## macOS Notes
 

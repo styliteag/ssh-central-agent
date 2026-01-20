@@ -1,12 +1,15 @@
 config
 .sca-jump-level
-sca
 scassh
 config_main
 config_single
 localvars.yml
 *.bak
+*.pyc
+__pycache__/
 .vscode/
 .DS_Store
 hosts
 hosts/
+sca.sh
+sca.py
