@@ -38,12 +38,12 @@
     when: "'./localvars.yml' is file" 
   - name: Create Local sca (bash version)
     template:
-      src: sca.j2
-      dest: "./{{ command_sca }}.bash"
+      src: sca.sh.j2
+      dest: "./{{ command_sca }}.sh"
       mode: u=rwx,g=rx,o=rx
   - name: Create Local sca (Python shim)
     template:
-      src: sca_shim.j2
+      src: sca.py.j2
       dest: "./{{ command_sca }}.py"
       mode: u=rwx,g=rx,o=rx
     # Note: We create it as .py to avoid conflict with sca/ directory
@@ -101,6 +101,13 @@
     file:
       src: "{{ playbook_dir }}/{{ command_sca }}.py"
       dest: "{{ bindir }}/{{ command_sca }}"
+      state: link
+      force: yes
+  - name: Place our command in the Path as "sca.sh"
+    become: "{{ bindir_become }}"
+    file:
+      src: "{{ playbook_dir }}/{{ command_sca }}.sh"
+      dest: "{{ bindir }}/{{ command_sca }}.sh"
       state: link
       force: yes
   - name: Create Local SSH config File

@@ -21,7 +21,8 @@ The system relies on three main pillars:
 ## Key Components & File Structure
 
 ### Core Scripts
--   **`sca`** (SSH Central Agent): The main CLI entry point. It sets up the environment, starts `sshagentmux.py`, and manages the SSH subshell.
+-   **`sca`** (SSH Central Agent): Python entry point. It sets up the environment, starts `sshagentmux.py`, and manages the SSH subshell.
+-   **`sca.sh`**: Legacy bash entry point generated from templates for compatibility.
 -   **`sshagentmux.py`**: The core logic for the agent multiplexer. It implements the SSH agent protocol to forward signing requests to the appropriate upstream agent.
 -   **`functions.sh`** - Shell functions for host management (list, find, add, connect).
 -   **`addhost`** - Script to add new hosts to the configuration.
@@ -32,7 +33,7 @@ The system relies on three main pillars:
 -   **`config_single`**: Single-host configuration variant.
 -   **`localvars.yml`**: Local variable overrides for Ansible deployment.
 -   **`hosts/`**: Directory containing individual host configuration files (YAML-like).
--   **`templates/`**: Jinja2 templates (`config.j2`, `sca.j2`, etc.) used to generate the final files.
+-   **`templates/`**: Jinja2 templates (`config.j2`, `sca.sh.j2`, etc.) used to generate the final files.
 
 ## Development & Usage Guidelines
 
@@ -40,7 +41,7 @@ The system relies on three main pillars:
 This is the primary tool for interaction. It creates a subshell with `SSH_AUTH_SOCK` pointing to the multiplexer.
 
 > [!WARNING]
-> The `sca` script is generated from `templates/sca.j2`. **Do not edit `sca` directly.** Make changes in the template and regenerate.
+> The Python entrypoint `sca` is generated from `templates/sca.py.j2` and the bash entrypoint `sca.sh` is generated from `templates/sca.sh.j2`. **Do not edit generated scripts directly.** Make changes in the templates and regenerate.
 
 **Common Commands:**
 ```bash
@@ -74,11 +75,7 @@ This is the primary tool for interaction. It creates a subshell with `SSH_AUTH_S
 # Kill all agents and remote connections
 ./sca --kill
 
-# Use Rust multiplexer (if installed)
-./sca --mux=rust
-
-# Use Python multiplexer (default)
-./sca --mux=python
+# Multiplexer is Python only (sshagentmux.py)
 ```
 
 **Note**: The system automatically multiplexes temporary agents (created from identity files) with the remote agent when both are available. This ensures that both local and remote keys are available through the multiplexed socket.
