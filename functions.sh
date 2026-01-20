@@ -1184,53 +1184,6 @@ use_existing_connection() {
     fi
   fi
 
-  # If we have a temporary agent and a remote agent, we need to set up the multiplexer
-  # even if we're using an existing connection (the mux socket might not have the temp agent)
-  if [ -n "$TEMP_AGENT_SOCK" ] && [ -S "$TEMP_AGENT_SOCK" ] && [ -S "$SCA_SSH_AUTH_SOCK" ] && check_agent_socket "$SCA_SSH_AUTH_SOCK"; then
-    # Check if mux socket exists and has both keys (temp + remote)
-    # If not, set up the multiplexer
-    local needs_mux_setup=true
-    if [ -S "$MUX_SSH_AUTH_SOCK" ] && check_agent_socket "$MUX_SSH_AUTH_SOCK"; then
-      # Check if mux socket has the temporary agent's key
-      local temp_key_fingerprint
-      temp_key_fingerprint=$(SSH_AUTH_SOCK="$TEMP_AGENT_SOCK" ssh-add -l 2>/dev/null | head -1 | awk '{print $2}')
-      if [ -n "$temp_key_fingerprint" ]; then
-        if SSH_AUTH_SOCK="$MUX_SSH_AUTH_SOCK" ssh-add -l 2>/dev/null | grep -q "$temp_key_fingerprint"; then
-          needs_mux_setup=false
-        fi
-      fi
-    fi
-    
-    if [ "$needs_mux_setup" == "true" ]; then
-      log_info "Setting up multiplexer for temporary agent + remote agent"
-      local local_agent_sock="$TEMP_AGENT_SOCK"
-      USE_RUST_MUX=false
-      [ "$MUX_TYPE" = "rust" ] && USE_RUST_MUX=true
-      
-      local saved_org_sock="$ORG_SSH_AUTH_SOCK"
-      ORG_SSH_AUTH_SOCK="$local_agent_sock"
-      
-      if [ "$USE_RUST_MUX" == "true" ]; then
-        setup_rust_multiplexer
-      else
-        setup_python_multiplexer
-      fi
-      
-      ORG_SSH_AUTH_SOCK="$saved_org_sock"
-      
-      MUX_PID=$OMUX_SSH_AGENT_PID
-      if [ "${SKIP_SYMLINK:-false}" != "true" ]; then
-        OMUX_EXPANDED=$(echo "$OMUX_SSH_AUTH_SOCK" | sed "s|^~|$HOME|")
-        TARGET_EXPANDED=$(echo "$MUX_SSH_AUTH_SOCK" | sed "s|^~|$HOME|")
-        if [ "$OMUX_EXPANDED" != "$TARGET_EXPANDED" ]; then
-          ln -sf "$OMUX_SSH_AUTH_SOCK" $MUX_SSH_AUTH_SOCK
-        fi
-      fi
-      export ORG_MUX_SSH_AUTH_SOCK=$OMUX_SSH_AUTH_SOCK
-      export SSH_AUTH_SOCK=$MUX_SSH_AUTH_SOCK
-    fi
-  fi
-
   # If we have a temporary agent and a remote agent, set up multiplexer
   # This ensures both keys are available (temp agent for ProxyCommand, remote for main connection)
   if [ -n "$TEMP_AGENT_SOCK" ] && [ -S "$TEMP_AGENT_SOCK" ] && [ -S "$SCA_SSH_AUTH_SOCK" ] && check_agent_socket "$SCA_SSH_AUTH_SOCK"; then
