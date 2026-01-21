@@ -8,6 +8,9 @@ localvars.yml
 *.pyc
 __pycache__/
 .vscode/
+.cursor/
+.ruff_cache/
+.sca_jump_level
 .DS_Store
 hosts
 hosts/
