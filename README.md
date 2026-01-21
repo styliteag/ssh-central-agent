@@ -168,6 +168,13 @@ eval `sca -e --key=local`
 ssh-add -l  # List available keys
 ```
 
+**Show version information:**
+```bash
+sca -v          # Show version and socket paths
+sca --version   # Same as above
+sca --help      # Show help message
+```
+
 **Direct SSH Connection:**
 
 You can also connect directly to hosts without starting a subshell. Positional arguments are automatically treated as SSH arguments:
@@ -229,6 +236,8 @@ sca --kill              # Kill all agents and connections, remove socket files
 sca -d                  # Enable debug mode (verbose output)
 sca -r                  # Reverse the order of agents when multiplexing
 sca -l 2                # Set security level (0-3, default: auto-detect)
+sca -v, --version       # Show version information and exit
+sca -h, --help          # Show help message and exit
 ```
 
 **Combined Options:**

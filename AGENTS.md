@@ -165,7 +165,9 @@ The `sshagentmux.py` script is the heart of the multi-agent capability. It acts 
 
 ## Using ssh-agent-mux (Rust)
 
-The `sca` (SSH Central Agent) script supports using `ssh-agent-mux` (a Rust-based alternative) instead of the built-in Python multiplexer. This is recommended for better performance and stability.
+**Note**: Rust multiplexer support is currently only available in the legacy bash version (`sca.sh`). The Python version (`sca`) only supports the built-in Python multiplexer.
+
+The legacy bash `sca.sh` script supports using `ssh-agent-mux` (a Rust-based alternative) instead of the built-in Python multiplexer. This is recommended for better performance and stability.
 
 `ssh-agent-mux` combines multiple SSH agents' keys into a single agent, allowing you to use keys from different sources (like 1Password, YubiKey, or standard ssh-agent) simultaneously.
 
@@ -235,17 +237,9 @@ ssh-agent-mux --restart-service
 
 ### Usage in sca
 
-The `sca` (SSH Central Agent) script will automatically detect `ssh-agent-mux` if it is installed. You can also force it:
+**Note**: The Python version of `sca` currently only supports the built-in Python multiplexer (`sshagentmux.py`). Rust multiplexer support (`ssh-agent-mux`) is not yet implemented in the Python port.
 
-```bash
-./sca --mux=rust
-```
-
-If you want to force the Python version:
-
-```bash
-./sca --mux=python
-```
+The Python implementation always uses the embedded Python multiplexer. If you need Rust multiplexer support, use the legacy bash version (`sca.sh`).
 
 ### Verifying Setup
 
