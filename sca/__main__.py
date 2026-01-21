@@ -27,7 +27,8 @@ from .socket_utils import verify_socket_working, resolve_socket_path
 from .process import kill_if_exists
 from .config import patch_jump_aliases
 from .logging_utils import (
-    log_info, log_error, log_success, log_warn, log_debug
+    log_info, log_error, log_success, log_warn, log_debug,
+    color_value, color_reset
 )
 from .platform_utils import expand_path
 
@@ -573,7 +574,7 @@ def setup_new_connection(
                 timeout=5
             )
             for line in result.stdout.splitlines():
-                log_info(line)
+                log_info(f"{color_value()}{line}{color_reset()}")
         except Exception:
             pass
     else:
@@ -749,7 +750,7 @@ def use_existing_connection(
             timeout=5
         )
         for line in result.stdout.splitlines():
-            log_info(line)
+            log_info(f"{color_value()}{line}{color_reset()}")
     except Exception:
         pass
 
