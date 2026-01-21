@@ -22,8 +22,27 @@ WarnWeakCrypto no
 
 Include {{ playbook_dir }}/hosts/*
 
+# Common settings for all user-defined hosts from hosts/* files
+# Only hosts tagged with "sca-host" will match
+Match tagged sca-host
+	# Include ~/.ssh/config_sca_common
+	# Common Settings for All hosts tagged with "sca-host"
+    KbdInteractiveAuthentication no
+    TCPKeepAlive yes
+	#IdentityAgent {{ sca_auth_sock }}
+	#ForwardAgent {{ sca_auth_sock }}
+	IdentityAgent {{ mux_auth_sock }}
+	#ForwardAgent {{ mux_auth_sock }}
+
+    ###ProxyJump sca-jump_org
+	### ProxyCommand ssh -W [%h]:%p sca-jump_org
+	#
+	### First Try Direct: "socat 2>/dev/null - tcp4:%h:%p,connect-timeout=0.1"
+	#ProxyCommand sh -c "socat 2>/dev/null - tcp4:%h:%p,connect-timeout=0.1 || ssh -W '[%h]:%p' sca-jump_org 2>/dev/null || ssh -W '[%h]:%p' sca-jump 2>/dev/null || ssh -W '[%h]:%p' sca-jump_local 2>/dev/null"
+    ProxyCommand sh -c "socat 2>/dev/null - tcp4:%h:%p,connect-timeout=0.2 || ssh -W '[%h]:%p' sca-jump 2>/dev/null"
 
 Host sca-key sca-key_my sca-key_local sca-key_org sca-key_direct sca-key_mux
+    Tag sca-key
 	User {{ remote_username }}
 	HostName {{ sca_key_server }}
 	Port {{ sca_key_server_port }}
@@ -39,6 +58,7 @@ Host sca-key sca-key_my sca-key_local sca-key_org sca-key_direct sca-key_mux
 
 # The sca-magic-jump is "magic" for the sed command in sca
 Host sca-jmp-level0 jmp0 jmp-level0 jump-level0 L0-sca-magic-jump
+    Tag sca-jmp
 	User {{ remote_username }}
 	HostName {{ sca_key_server }}
 	ForwardAgent no
@@ -51,6 +71,7 @@ Host sca-jmp-level0 jmp0 jmp-level0 jump-level0 L0-sca-magic-jump
 	SetEnv STY_LOCALUSER={{ remote_username }}
 
 Host sca-jmp-level1 jmp1 jmp-level1 jump-level1 L1-sca-magic-jump
+	Tag sca-jmp
 	User {{ remote_username }}
 	HostName {{ sca_key_server }}
 	Port 9901
@@ -68,6 +89,7 @@ Host sca-jmp-level1 jmp1 jmp-level1 jump-level1 L1-sca-magic-jump
 	#ProxyJump sca-jmp-level0
 
 Host sca-jmp-level2 jmp2 jmp-level2 jump-level2 L2-sca-magic-jump
+	Tag sca-jmp
 	User {{ remote_username }}
 	HostName {{ sca_key_server }}
 	Port 9902
@@ -85,6 +107,7 @@ Host sca-jmp-level2 jmp2 jmp-level2 jump-level2 L2-sca-magic-jump
 	#ProxyJump sca-jmp-level0
 
 Host sca-jmp-level3 jmp3 jmp-level3 jump-level3 L3-sca-magic-jump
+	Tag sca-jmp
 	User {{ remote_username }}
 	HostName {{ sca_key_server }}
 	Port 9903
@@ -102,6 +125,7 @@ Host sca-jmp-level3 jmp3 jmp-level3 jump-level3 L3-sca-magic-jump
 	#ProxyJump sca-jmp-level0
 
 Host sca-jmp-level0 jmp0 jmp-level0 jump-level0 L0-sca-magic-jump
+	Tag sca-jmp
 	User {{ remote_username }}
 	HostName {{ sca_key_server }}
 	Port {{ sca_key_server_port }}
@@ -114,20 +138,20 @@ Host sca-jmp-level0 jmp0 jmp-level0 jump-level0 L0-sca-magic-jump
 	SetEnv STY_LOCALUSER={{ remote_username }}
 
 Host mydev sca-mydev sca-mydev_my sca-mydev_local sca-mydev_direct sca-mydev_sca sca-mydev_mux
+	Tag sca-host
 	user {{ remote_username }}
-        hostname 10.50.6.1
-        port 22
-        # mydev needs to use the Forwarded key for gitlab
-        ForwardAgent yes
-        include ~/.ssh/config_sca_common
+    hostname 10.50.6.1
+    port 22
+    # mydev needs to use the Forwarded key for gitlab
+    ForwardAgent yes
 
 Host mydev40 sca-mydev40 sca-mydev40_my sca-mydev40_local sca-mydev40_direct sca-mydev40_sca sca-mydev40_mux
+	Tag sca-host
 	user {{ remote_username }}
-        hostname 10.40.6.1
-        port 22
-        # mydev needs to use the Forwarded key for gitlab
-        ForwardAgent yes
-        include ~/.ssh/config_sca_common
+    hostname 10.40.6.1
+    port 22
+    # mydev needs to use the Forwarded key for gitlab
+    ForwardAgent yes
 
 #Match final originalhost "sca-*,!sca-jump,!sca-jump-org,!sca-key"
 #	ForwardAgent yes

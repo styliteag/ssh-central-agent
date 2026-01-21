@@ -118,10 +118,6 @@
     template:
       src: config.j2
       dest: "./{{ ssh_config_file }}"
-  - name: Create Local SSH config_sca_common File
-    template:
-      src: config_sca_common.j2
-      dest: "~/.ssh/config_sca_common"
   - name: Remove Include from {{ ssh_config_file }}_single
     lineinfile:
       path: "./{{ ssh_config_file }}_single"

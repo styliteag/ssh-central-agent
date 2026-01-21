@@ -29,6 +29,6 @@ Host $HOST sca-${HOST}
     port $PORT
     #ProxyJump sca-xxx
     #ProxyJump none
-    include ~/.ssh/config_sca_common
+    Tag sca-host
 
 EOF
