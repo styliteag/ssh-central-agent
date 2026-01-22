@@ -22,8 +22,7 @@ echo "Adding to hosts/$FILE"
 tee -a hosts/$FILE <<EOF
 #
 # Autoadded $FILE $HOST $IP $PORT $USER
-Host $HOST sca-${HOST} 
-    #sca-${HOST}_my sca-${HOST}_local sca-${HOST}_direct sca-${HOST}_org sca-${HOST}_mux
+Host $HOST ${HOST}_* sca-${HOST} sca-${HOST}_*
     Tag sca-host
     user $USER
     hostname $HOSTNAME
