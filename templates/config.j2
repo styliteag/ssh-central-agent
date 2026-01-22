@@ -141,10 +141,10 @@ Host *_org
     IdentityAgent $ORG_SSH_AUTH_SOCK
 
 Host *_local
-    IdentityAgent $LOCAL_SSH_AUTH_SOCK
+    IdentityAgent $SSH_AUTH_SOCK
 	ForwardAgent {{ sca_auth_sock }}
 
-Host *_sca
+Host *_remote
     #IdentityAgent $SCA_SSH_AUTH_SOCK
 	IdentityAgent {{ sca_auth_sock }}
 	ForwardAgent {{ sca_auth_sock }}
@@ -154,13 +154,36 @@ Host *_mux
 	IdentityAgent {{ mux_auth_sock }}
 	ForwardAgent {{ mux_auth_sock }}
 
+
+# if both ProxyJump and ProxyCommand are set, ProxyJump wins. ProxyCommand is ignored.
+# If only one is set, the other is ignored.
+# If neither is set, the connection is direct.
+
 Host *_direct
     ProxyJump none
+	ProxyCommand none
+
+Host *_nojump
+    ProxyJump none
+	#ProxyCommand none
+
+Host *_jump
+    ProxyJump sca-jump
+	#roxyCommand none
+
+Host *_noproxy
+    #ProxyJump none
+	ProxyCommand none
+
+Host *_proxy
+	ProxyCommand "ssh -W '[%h]:%p' sca-jump"
+	ProxyJump none
 
 Host *_my
-	ForwardAgent yes
+	#ForwardAgent yes
 	#IdentityAgent $SSH_AUTH_SOCK
-	IdentityAgent $LOCAL_SSH_AUTH_SOCK
+	#IdentityAgent $SSH_AUTH_SOCK
+	#ForwardAgent $SSH_AUTH_SOCK
 	#ProxyJump sca-jump_my
 	ProxyCommand sh -c "socat 2>/dev/null - tcp4:%h:%p,connect-timeout=0.1 || ssh -W '[%h]:%p' sca-jump 2>/dev/null"
 
@@ -183,6 +206,7 @@ Match tagged sca-host
 	IdentityAgent {{ mux_auth_sock }}
 	#ForwardAgent {{ mux_auth_sock }}
 
+    # if both ProxyJump and ProxyCommand are set, ProxyJump wins. ProxyCommand is ignored.
     ###ProxyJump sca-jump_org
 	### ProxyCommand ssh -W [%h]:%p sca-jump_org
 	#
