@@ -23,10 +23,14 @@ tee -a hosts/$FILE <<EOF
 #
 # Autoadded $FILE $HOST $IP $PORT $USER
 Host $HOST ${HOST}_* sca-${HOST} sca-${HOST}_*
-    Tag sca-host
     user $USER
     hostname $HOSTNAME
     port $PORT
+    Tag sca-host
+    Tag $FILE
+    Tag $USER
+    Tag $PORT
+    #Tag NoJump
     #ProxyJump sca-xxx
     #ProxyJump none
 
