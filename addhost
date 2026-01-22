@@ -28,8 +28,6 @@ Host $HOST ${HOST}_* sca-${HOST} sca-${HOST}_*
     port $PORT
     Tag sca-host
     Tag File-$FILE
-    Tag User-$USER
-    Tag Port-$PORT
     #Tag NoJump
     #ProxyJump none
 
