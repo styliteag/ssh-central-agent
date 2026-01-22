@@ -27,11 +27,10 @@ Host $HOST ${HOST}_* sca-${HOST} sca-${HOST}_*
     hostname $HOSTNAME
     port $PORT
     Tag sca-host
-    Tag $FILE
-    Tag $USER
-    Tag $PORT
+    Tag File-$FILE
+    Tag User-$USER
+    Tag Port-$PORT
     #Tag NoJump
-    #ProxyJump sca-xxx
     #ProxyJump none
 
 EOF
