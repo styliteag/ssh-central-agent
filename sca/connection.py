@@ -210,7 +210,7 @@ def start_remote_agent(
     ssh_cmd_list.extend([
         "-a",  # Disable agent forwarding (we're forwarding the socket via -L instead)
         "-L", f"{expanded_socket}:{remote_socket}",
-        "-o", f"SetEnv SCA_LEVEL={level}",
+        "-o", f"SetEnv STY_LEVEL={level} SCA_LEVEL={level}",
         "sca-key", "ragent",
         f"{os.environ.get('LOGNAME', '')},{os.environ.get('USER', '')},{rusername},{level},{max_level},{socket.gethostname()},{get_home_dir()}"
     ])

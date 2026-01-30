@@ -37,6 +37,7 @@ import queue as Queue
 import time
 import base64
 import json
+import shutil
 
 # Windows named pipe support
 if sys.platform == "win32":
@@ -1167,6 +1168,20 @@ def main():
     if extra_args:
         # start command if specified in extra_args
         os.environ['SSH_AUTH_SOCK'] = sock_path
+        LOG.debug("Setting SSH_AUTH_SOCK=%s", sock_path)
+        LOG.debug("extra_args: %r", extra_args)
+        LOG.debug("Attempting to execute command: %s", extra_args[0])
+
+        # Check if the command exists
+        cmd_path = shutil.which(extra_args[0])
+        if cmd_path:
+            LOG.debug("Command found at: %s", cmd_path)
+        else:
+            LOG.error("Command not found: %r", extra_args[0])
+            LOG.error("extra_args was: %r", extra_args)
+            LOG.error("PATH: %s", os.environ.get('PATH', ''))
+            sys.exit(1)
+
         os.execvp(extra_args[0], extra_args)
         os.kill(mypid, signal.SIGKILL)
     else:

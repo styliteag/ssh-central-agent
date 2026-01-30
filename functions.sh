@@ -676,7 +676,7 @@ start_remote_agent() {
     
     log_info "Starting SSH agent forwarder (level $level)..."
     SCA_LOCALUSER=$LOGNAME SCA_REMOTEUSER=$RUSERNAME SCA_IP=$(hostname) \
-        eval "$ssh_cmd -tt -a -L $SCA_SSH_AUTH_SOCK:/home/$RUSERNAME/yubikey-agent.sock -o \"SetEnv SCA_LEVEL=$level\" sca-key ragent \"$LOGNAME,$USER,$RUSERNAME,$level,$LEVEL,$HOSTNAME,$HOME\"" >/dev/null 2>&1 &
+        eval "$ssh_cmd -tt -a -L $SCA_SSH_AUTH_SOCK:/home/$RUSERNAME/yubikey-agent.sock -o \"SetEnv STY_LEVEL=$level SCA_LEVEL=$level\" sca-key ragent \"$LOGNAME,$USER,$RUSERNAME,$level,$LEVEL,$HOSTNAME,$HOME\"" >/dev/null 2>&1 &
     
     ssh_pid=$!
     log_success "SSH agent forwarder is running as PID $ssh_pid"
@@ -735,6 +735,13 @@ setup_python_multiplexer() {
     # We set SSH_AUTH_SOCK to the remote agent, and pass the local/temporary agent as --socket
     # If ORG_SSH_AUTH_SOCK is /dev/null (no local agent), the multiplexer will detect it's invalid
     # and just use the remote agent (SSH_AUTH_SOCK)
+
+    # Build level argument if MY_LEVEL is set
+    local level_arg=""
+    if [ -n "$MY_LEVEL" ]; then
+        level_arg="--level $MY_LEVEL"
+    fi
+
     if [ "$REVERSE" == "1" ]; then
         log_info "Reversing the order of the agents"
         SSH_AUTH_SOCK=$SCA_SSH_AUTH_SOCK
