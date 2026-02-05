@@ -1772,20 +1772,28 @@ SUBSHELL_MODE=0           # Open subshell with MUX agent environment
 
 print_help() {
   local R B C G Y BL D GR
+  local R B C G Y CM
   if [ -t 2 ] && [ -z "${NO_COLOR:-}" ] && command -v tput >/dev/null 2>&1; then
     R=$(tput sgr0)
     B=$(tput bold)
     C=$(tput setaf 6)
     G=$(tput setaf 2)
     Y=$(tput setaf 3)
-    BL=$(tput setaf 4)
-    D=$(tput dim 2>/dev/null || true)
-    GR=$(tput setaf 8 2>/dev/null || tput setaf 7)
+    CM=$(tput setaf 8 2>/dev/null || tput setaf 7)
   else
-    R="" B="" C="" G="" Y="" BL="" D="" GR=""
+    R="" B="" C="" G="" Y="" CM=""
   fi
-  local S
+  local S N P
   S=$(basename "$SCA_SCRIPT")
+  N=${#S}
+  # ex: print example line with comment aligned at column 48
+  # usage: ex <visible_cmd_len> <colored_cmd> <comment>
+  ex() {
+    local vlen=$1 cmd=$2 cmt=$3
+    local pad=$(( 48 - 2 - vlen ))
+    [ $pad -lt 2 ] && pad=2
+    printf "  %s%*s${CM}# %s${R}\n" "$cmd" "$pad" "" "$cmt"
+  }
   cat >&2 <<HELPEOF
 ${B}${G}SCA - SSH Central Agent${R} - Cross-platform SSH agent multiplexing system
 
@@ -1818,23 +1826,23 @@ ${B}Options:${R}
   ${C}--${R}                    End of options; remaining args passed to ssh
 
 ${B}Examples:${R}
-  ${D}${GR}# Direct SSH connection (default)${R}
-  $S ${Y}user@host${R}                          ${D}${GR}# Connect using remote agent${R}
-  $S ${C}--key=local${R} ${Y}user@host${R}              ${D}${GR}# Connect using local agent${R}
-  $S ${C}--key=mux${R} ${Y}user@host${R}               ${D}${GR}# Connect using multiplexed agent${R}
-  $S ${C}--key=remote${R} ${C}--${R} ${Y}-p9922 root@host${R}  ${D}${GR}# SSH options after --${R}
-
-  ${D}${GR}# Subshell mode${R}
-  $S ${C}-s${R}                                  ${D}${GR}# Open subshell with MUX agent env${R}
-  $S ${C}--shell${R} ${C}--key=local${R}                ${D}${GR}# Subshell with local agent only${R}
-
-  ${D}${GR}# Environment & management${R}
-  eval \`$S ${C}-e${R} ${C}--key=local${R}\`              ${D}${GR}# Set SSH_AUTH_SOCK in current shell${R}
-  $S ${C}--list${R}                              ${D}${GR}# List all configured hosts${R}
-  $S ${C}--find${R} ${Y}myserver${R}                    ${D}${GR}# Find host 'myserver'${R}
-  $S ${C}--wait${R}                              ${D}${GR}# Background monitoring mode${R}
-  $S ${C}--kill${R}                              ${D}${GR}# Clean up all agents${R}
+  ${CM}# Direct SSH connection (default)${R}
 HELPEOF
+  ex $((N+1+9))        "$S ${Y}user@host${R}"                                    "Connect using remote agent"      >&2
+  ex $((N+12+1+9))     "$S ${C}--key=local${R} ${Y}user@host${R}"                "Connect using local agent"       >&2
+  ex $((N+10+1+9))     "$S ${C}--key=mux${R} ${Y}user@host${R}"                  "Connect using multiplexed agent" >&2
+  ex $((N+13+1+19))    "$S ${C}--key=remote${R} ${C}--${R} ${Y}-p9922 root@host${R}" "SSH options after --"         >&2
+  echo >&2
+  echo "  ${CM}# Subshell mode${R}" >&2
+  ex $((N+3))          "$S ${C}-s${R}"                                            "Open subshell with MUX agent env"  >&2
+  ex $((N+8+1+11))     "$S ${C}--shell${R} ${C}--key=local${R}"                   "Subshell with local agent only"    >&2
+  echo >&2
+  echo "  ${CM}# Environment & management${R}" >&2
+  ex $((6+N+16))       "eval \`$S ${C}-e${R} ${C}--key=local${R}\`"               "Set SSH_AUTH_SOCK in current shell" >&2
+  ex $((N+7))          "$S ${C}--list${R}"                                        "List all configured hosts"         >&2
+  ex $((N+7+1+8))      "$S ${C}--find${R} ${Y}myserver${R}"                       "Find host 'myserver'"              >&2
+  ex $((N+7))          "$S ${C}--wait${R}"                                        "Background monitoring mode"        >&2
+  ex $((N+7))          "$S ${C}--kill${R}"                                        "Clean up all agents"               >&2
 }
 
 # Parse arguments

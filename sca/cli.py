@@ -211,12 +211,18 @@ def _print_help() -> None:
     C = Colors.CYAN if use_colors else ""
     G = Colors.GREEN if use_colors else ""
     Y = Colors.YELLOW if use_colors else ""
-    BL = Colors.BLUE if use_colors else ""
-    D = Colors.DIM if use_colors else ""
-    GR = Colors.GRAY if use_colors else ""
+    CM = Colors.GRAY if use_colors else ""  # comment color (gray, no dim)
 
     sca = os.environ.get("SCA_SCRIPT", "sca")
     sca = Path(sca).name
+
+    # Build example lines with aligned comments at column 48
+    COL = 48
+    def ex(cmd_vis_len: int, cmd_colored: str, comment: str) -> str:
+        pad = " " * max(2, COL - 2 - cmd_vis_len)
+        return f"  {cmd_colored}{pad}{CM}# {comment}{R}"
+
+    n = len(sca)  # visible length of script name
 
     lines = [
         f"{B}{G}SCA - SSH Central Agent{R} - Cross-platform SSH agent multiplexing system",
@@ -245,22 +251,22 @@ def _print_help() -> None:
         f"  {C}--{R}                    End of options; remaining args passed to ssh",
         "",
         f"{B}Examples:{R}",
-        f"  {D}{GR}# Direct SSH connection (default){R}",
-        f"  {sca} {Y}user@host{R}                          {D}{GR}# Connect using remote agent{R}",
-        f"  {sca} {C}--key=local{R} {Y}user@host{R}              {D}{GR}# Connect using local agent{R}",
-        f"  {sca} {C}--key=mux{R} {Y}user@host{R}               {D}{GR}# Connect using multiplexed agent{R}",
-        f"  {sca} {C}--key=remote{R} {C}--{R} {Y}-p9922 root@host{R}  {D}{GR}# SSH options after --{R}",
+        f"  {CM}# Direct SSH connection (default){R}",
+        ex(n + 1 + 9,          f"{sca} {Y}user@host{R}",                                         "Connect using remote agent"),
+        ex(n + 12 + 1 + 9,     f"{sca} {C}--key=local{R} {Y}user@host{R}",                       "Connect using local agent"),
+        ex(n + 10 + 1 + 9,     f"{sca} {C}--key=mux{R} {Y}user@host{R}",                         "Connect using multiplexed agent"),
+        ex(n + 13 + 1 + 19,    f"{sca} {C}--key=remote{R} {C}--{R} {Y}-p9922 root@host{R}",      "SSH options after --"),
         "",
-        f"  {D}{GR}# Subshell mode{R}",
-        f"  {sca} {C}-s{R}                                  {D}{GR}# Open subshell with MUX agent env{R}",
-        f"  {sca} {C}--shell{R} {C}--key=local{R}                {D}{GR}# Subshell with local agent only{R}",
+        f"  {CM}# Subshell mode{R}",
+        ex(n + 3,              f"{sca} {C}-s{R}",                                                 "Open subshell with MUX agent env"),
+        ex(n + 8 + 1 + 11,     f"{sca} {C}--shell{R} {C}--key=local{R}",                          "Subshell with local agent only"),
         "",
-        f"  {D}{GR}# Environment & management{R}",
-        f"  eval `{sca} {C}-e{R} {C}--key=local{R}`              {D}{GR}# Set SSH_AUTH_SOCK in current shell{R}",
-        f"  {sca} {C}--list{R}                              {D}{GR}# List all configured hosts{R}",
-        f"  {sca} {C}--find{R} {Y}myserver{R}                    {D}{GR}# Find host 'myserver'{R}",
-        f"  {sca} {C}--wait{R}                              {D}{GR}# Background monitoring mode{R}",
-        f"  {sca} {C}--kill{R}                              {D}{GR}# Clean up all agents{R}",
+        f"  {CM}# Environment & management{R}",
+        ex(6 + n + 16,         f"eval `{sca} {C}-e{R} {C}--key=local{R}`",                        "Set SSH_AUTH_SOCK in current shell"),
+        ex(n + 7,              f"{sca} {C}--list{R}",                                             "List all configured hosts"),
+        ex(n + 7 + 1 + 8,      f"{sca} {C}--find{R} {Y}myserver{R}",                              "Find host 'myserver'"),
+        ex(n + 7,              f"{sca} {C}--wait{R}",                                             "Background monitoring mode"),
+        ex(n + 7,              f"{sca} {C}--kill{R}",                                             "Clean up all agents"),
     ]
     print("\n".join(lines), file=sys.stderr)
 
