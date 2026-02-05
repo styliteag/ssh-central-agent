@@ -224,8 +224,7 @@ def cli_main() -> Optional[None]:
     parser.add_argument("--list", dest="list_hosts_flag", action="store_true", help="List all configured hosts")
     parser.add_argument("--find", dest="find_hostname", type=str, help="Find and display information about a specific host")
     parser.add_argument("--add", dest="add_hostname", type=str, help="Add a new host to the configuration")
-    parser.add_argument("-s", "--ssh", dest="ssh_mode", action="store_true", help="Connect directly via ssh")
-    parser.add_argument("--connect", dest="connect_mode", action="store_true", help="Alias for --ssh")
+    parser.add_argument("-s", "--shell", dest="subshell_mode", action="store_true", help="Open a subshell with the MUX agent environment set")
     parser.add_argument("--kill", dest="kill_flag", action="store_true", help="Kill all agents and remote connections")
 
     # Parse known args, leaving unknown args for SSH
@@ -306,10 +305,11 @@ def cli_main() -> Optional[None]:
         os.environ["KEY"] = args.key
     # Always use Python multiplexer
     os.environ["MUX_TYPE"] = "python"
-    if args.ssh_mode or args.connect_mode or ssh_args:
+    if args.subshell_mode:
+        os.environ["SUBSHELL_MODE"] = "1"
+    elif ssh_args:
         os.environ["SSH_MODE"] = "1"
-        if ssh_args:
-            os.environ["SSH_ARGS"] = " ".join(ssh_args)
+        os.environ["SSH_ARGS"] = " ".join(ssh_args)
 
     # Return None to continue to main logic
     return None

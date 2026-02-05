@@ -323,6 +323,7 @@ def execute_command_or_shell(
 
     shell_mode = os.environ.get("SHELL_MODE") == "1"
     ssh_mode = os.environ.get("SSH_MODE") == "1"
+    subshell_mode = os.environ.get("SUBSHELL_MODE") == "1"
     wait_mode = os.environ.get("WAIT") == "1"
     key = os.environ.get("KEY", "mux")
 
@@ -387,6 +388,12 @@ def execute_command_or_shell(
         expanded_socket = str(expand_path(resolved_socket))
         ssh_cmd = _build_ssh_command(playbook_dir, ssh_config_file, expanded_socket, ssh_args)
         _execute_ssh_connection(ssh_cmd, expanded_socket, temp_agent_pid, temp_agent_sock)
+
+    elif subshell_mode:
+        # Subshell Mode: Open a subshell with the MUX agent environment set
+        log_info("Starting subshell with MUX agent environment")
+        shell = os.environ.get("SHELL", "/bin/sh")
+        os.execv(shell, [shell])
 
     elif wait_mode:
         # Wait Mode: Monitor connection and restart if needed
@@ -877,9 +884,9 @@ def main():
     if started_mux is not None:
         _started_mux_pid = started_mux
 
-    # Set environment variables
-    os.environ["SCA_SSH_AUTH_SOCK"] = sca_ssh_auth_sock
-    os.environ["MUX_SSH_AUTH_SOCK"] = mux_ssh_auth_sock
+    # Set environment variables (expand ~ so subshells can use them directly)
+    os.environ["SCA_SSH_AUTH_SOCK"] = str(expand_path(sca_ssh_auth_sock))
+    os.environ["MUX_SSH_AUTH_SOCK"] = str(expand_path(mux_ssh_auth_sock))
     os.environ["SCA_SUBSHELL"] = "SCA-KEY"
     os.environ["SCA_USER"] = rusername
     os.environ["SCA_JUMPHOST"] = f"sca-jump-level{my_level}"

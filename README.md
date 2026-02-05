@@ -178,11 +178,10 @@ sca --help      # Show help message
 
 **Direct SSH Connection:**
 
-You can also connect directly to hosts without starting a subshell. Positional arguments are automatically treated as SSH arguments:
+Positional arguments are automatically treated as SSH arguments - `sca` is an SSH tool by default:
 
 ```bash
 sca user@hostname                    # Connect using remote agent (default)
-sca --ssh user@hostname              # Same as above (explicit)
 sca --key=local user@hostname        # Connect using local agent
 sca --key=mux user@hostname          # Connect using multiplexed agent
 ```
@@ -195,11 +194,21 @@ sca --key=local -- -o StrictHostKeyChecking=no user@host
 sca --key=mux -- -p9922 -v user@hostname
 ```
 
-All arguments after `--ssh` or `--` are passed directly to `ssh`, so you can use any SSH options:
+All arguments after `--` are passed directly to `ssh`, so you can use any SSH options:
 
 ```bash
-sca --key=local --ssh -p9922 -v user@hostname
-sca --key=mux --ssh user@hostname "command to run"
+sca --key=local -- -p9922 -v user@hostname
+sca --key=mux -- user@hostname "command to run"
+```
+
+**Subshell Mode:**
+
+Use `-s` or `--shell` to open a subshell with the MUX agent environment set, instead of connecting to a host:
+
+```bash
+sca -s                               # Open subshell with MUX agent environment
+sca --shell                          # Same as above
+sca --shell --key=local              # Subshell with local agent
 ```
 
 ### Command Options
@@ -216,21 +225,27 @@ sca --key=mux           # Start subshell with multiplexed agent (local + remote)
 sca --list              # List all configured hosts
 sca --find hostname     # Find and display information about a specific host
 sca --add hostname      # Add a new host to the configuration
-sca --ssh [args...]     # Connect directly via ssh (all args passed to ssh)
 ```
 
-**Direct SSH Connection:**
+**Direct SSH Connection (default):**
 ```bash
 sca user@host                          # Connect using remote agent (default)
-sca --ssh user@host                    # Same as above (explicit)
 sca --key=local user@host              # Connect using local agent
-sca --key=mux --ssh -p9922 user@host  # Connect using multiplexed agent with options
+sca --key=mux user@host               # Connect using multiplexed agent
 sca --key=remote -- -p9922 root@10.20.3.254 hostname  # Use -- for SSH options starting with -
-sca --key=remote --ssh host command    # Execute command on remote host
+sca --key=mux -- -p9922 user@host     # Connect using multiplexed agent with options
+```
+
+**Subshell Mode:**
+```bash
+sca -s                                 # Open subshell with MUX agent environment
+sca --shell                            # Same as above
+sca --shell --key=local                # Subshell with local agent only
 ```
 
 **Advanced Options:**
 ```bash
+sca -s                  # Open a subshell with the MUX agent environment set
 sca -e --key=local      # Output env vars for eval (use with eval \`sca -e --key=local\`)
 sca --wait              # Run in background and monitor connection, restart if needed
 sca --kill              # Kill all agents and connections, remove socket files

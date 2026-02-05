@@ -886,10 +886,15 @@ execute_command_or_shell() {
     fi
     exit $ssh_exit_code
     
+  elif [ "$SUBSHELL_MODE" == "1" ]; then
+    # Subshell Mode: Open a subshell with the MUX agent environment set
+    log_info "Starting subshell with MUX agent environment"
+    $SHELL
+
   elif [ -n "$CMD" ]; then
     log_info "STARTING: $CMD"
     eval $CMD
-    
+
   elif [ -n "$WAIT" ]; then
     # Wait Mode: Monitor connection and restart if needed
     log_info "WAIT in a Loop and check every $CHECK_SECONDS if the Connection is dead"
@@ -1638,13 +1643,9 @@ parse_arguments() {
       do_cmd "$CMD_NAME" "$2"
       exit 1
       ;;
-    -s|--ssh|--connect)
+    --shell)
+      SUBSHELL_MODE=1
       shift
-      # Collect all remaining arguments for SSH (everything after --ssh)
-      SSH_ARGS="$*"
-      SSH_MODE=1
-      # Clear remaining args so they don't get processed as options
-      set --
       ;;
     --kill)
       log_info "Killing all agents and remote connections..."
@@ -1711,13 +1712,8 @@ parse_arguments() {
             OPTARG="${OPTARG#?}"
             ;;
           s)
-            shift
-            # Collect all remaining arguments for SSH (everything after -s)
-            SSH_ARGS="$*"
-            SSH_MODE=1
-            # Clear remaining args so they don't get processed as options
-            set --
-            OPTARG=""
+            SUBSHELL_MODE=1
+            OPTARG="${OPTARG#?}"
             ;;
           l)
             if [ -z "$2" ]; then
@@ -1772,6 +1768,7 @@ ORG_ARGS=$*
 ORG_SSH_AUTH_SOCK=$SSH_AUTH_SOCK
 SSH_MODE=0                # Direct SSH connection mode
 SSH_ARGS=                 # Arguments for SSH command
+SUBSHELL_MODE=0           # Open subshell with MUX agent environment
 # CMD will be set after argument parsing
 
 
@@ -1796,9 +1793,7 @@ Options:
   --list                List all configured hosts
   --find HOSTNAME       Find and display information about a specific host
   --add HOSTNAME        Add a new host to the configuration
-  -s, --ssh [args...]   Connect directly via ssh with specified agent
-                        All arguments after --ssh are passed directly to ssh
-                        Use with --key to select agent: local, remote, or mux
+  -s, --shell           Open a subshell with the MUX agent environment set
   --                    End of options marker: treat all following args as SSH arguments
                         Use this when SSH options start with '-' (e.g., -p, -o)
   --kill                Kill all agents and remote connections, remove socket files
@@ -1810,11 +1805,12 @@ Examples:
   eval \`$SCA_SCRIPT -e --key=local\`         # Set SSH_AUTH_SOCK in current shell
   $SCA_SCRIPT --list                          # List all configured hosts
   $SCA_SCRIPT --find myserver                 # Find host 'myserver'
+  $SCA_SCRIPT -s                               # Open subshell with MUX agent environment
+  $SCA_SCRIPT --shell --key=local              # Subshell with local agent only
   $SCA_SCRIPT myserver                        # Connect to 'myserver' (uses remote agent)
-  $SCA_SCRIPT --ssh myserver                  # Connect to 'myserver' (uses remote agent)
-  $SCA_SCRIPT --key=local --ssh user@host     # Connect using local agent
+  $SCA_SCRIPT --key=local user@host           # Connect using local agent
   $SCA_SCRIPT --key=remote -- -p9922 root@192.168.178.100 ls  # Connect with SSH options and run 'ls' command
-  $SCA_SCRIPT --key=mux --ssh -p9922 host    # Connect using multiplexed agent with custom port
+  $SCA_SCRIPT --key=mux -- -p9922 host       # Connect using multiplexed agent with custom port
   $SCA_SCRIPT --wait                          # Run in background monitoring mode
   $SCA_SCRIPT --kill                          # Clean up all agents and connections"
 
