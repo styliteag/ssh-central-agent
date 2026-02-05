@@ -10,7 +10,10 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from .logging_utils import log_error, log_info, log_success, highlight_line, color_file_header, color_reset
+from .logging_utils import (
+    log_error, log_info, log_success, highlight_line, color_file_header, color_reset,
+    Colors, _should_use_colors
+)
 from .process import kill_all_sca_processes
 
 
@@ -200,6 +203,68 @@ def kill_all() -> None:
     sys.exit(0)
 
 
+def _print_help() -> None:
+    """Print colorful help message with examples."""
+    use_colors = _should_use_colors()
+    R = Colors.RESET if use_colors else ""
+    B = Colors.BOLD if use_colors else ""
+    C = Colors.CYAN if use_colors else ""
+    G = Colors.GREEN if use_colors else ""
+    Y = Colors.YELLOW if use_colors else ""
+    BL = Colors.BLUE if use_colors else ""
+    D = Colors.DIM if use_colors else ""
+    GR = Colors.GRAY if use_colors else ""
+
+    sca = os.environ.get("SCA_SCRIPT", "sca")
+    sca = Path(sca).name
+
+    lines = [
+        f"{B}{G}SCA - SSH Central Agent{R} - Cross-platform SSH agent multiplexing system",
+        "",
+        f"{B}Usage:{R}  {sca} [OPTIONS] [user@]hostname [ssh-args ...]",
+        f"        {sca} -s [OPTIONS]",
+        "",
+        f"{B}Options:{R}",
+        f"  {C}-h{R}, {C}--help{R}              Show this help message and exit",
+        f"  {C}-v{R}, {C}--version{R}           Show version information and exit",
+        f"  {C}-d{R}, {C}--debug{R}             Enable debug mode (verbose output)",
+        f"  {C}-r{R}, {C}--reverse{R}           Reverse the order of agents when multiplexing",
+        f"  {C}-w{R}, {C}--wait{R}              Run in background and monitor connection",
+        f"  {C}-e{R}, {C}--env{R}               Output environment variables in shell format",
+        f"  {C}-l{R}, {C}--level{R} {Y}LEVEL{R}       Set security level (0-3, default: auto-detect)",
+        f"  {C}--key{R} {Y}{{local,remote,mux}}{R}",
+        f"                          Specify which key to use",
+        f"                            {Y}local{R}:  Use local SSH agent only",
+        f"                            {Y}remote{R}: Use remote SSH agent only (default)",
+        f"                            {Y}mux{R}:    Use multiplexed agent (local + remote)",
+        f"  {C}-s{R}, {C}--shell{R}             Open a subshell with the MUX agent environment set",
+        f"  {C}--list{R}                List all configured hosts",
+        f"  {C}--find{R} {Y}HOSTNAME{R}       Find and display information about a specific host",
+        f"  {C}--add{R} {Y}HOSTNAME{R}        Add a new host to the configuration",
+        f"  {C}--kill{R}                Kill all agents and remote connections",
+        f"  {C}--{R}                    End of options; remaining args passed to ssh",
+        "",
+        f"{B}Examples:{R}",
+        f"  {D}{GR}# Direct SSH connection (default){R}",
+        f"  {sca} {Y}user@host{R}                          {D}{GR}# Connect using remote agent{R}",
+        f"  {sca} {C}--key=local{R} {Y}user@host{R}              {D}{GR}# Connect using local agent{R}",
+        f"  {sca} {C}--key=mux{R} {Y}user@host{R}               {D}{GR}# Connect using multiplexed agent{R}",
+        f"  {sca} {C}--key=remote{R} {C}--{R} {Y}-p9922 root@host{R}  {D}{GR}# SSH options after --{R}",
+        "",
+        f"  {D}{GR}# Subshell mode{R}",
+        f"  {sca} {C}-s{R}                                  {D}{GR}# Open subshell with MUX agent env{R}",
+        f"  {sca} {C}--shell{R} {C}--key=local{R}                {D}{GR}# Subshell with local agent only{R}",
+        "",
+        f"  {D}{GR}# Environment & management{R}",
+        f"  eval `{sca} {C}-e{R} {C}--key=local{R}`              {D}{GR}# Set SSH_AUTH_SOCK in current shell{R}",
+        f"  {sca} {C}--list{R}                              {D}{GR}# List all configured hosts{R}",
+        f"  {sca} {C}--find{R} {Y}myserver{R}                    {D}{GR}# Find host 'myserver'{R}",
+        f"  {sca} {C}--wait{R}                              {D}{GR}# Background monitoring mode{R}",
+        f"  {sca} {C}--kill{R}                              {D}{GR}# Clean up all agents{R}",
+    ]
+    print("\n".join(lines), file=sys.stderr)
+
+
 def cli_main() -> Optional[None]:
     """
     Parse CLI arguments using argparse.
@@ -263,7 +328,7 @@ def cli_main() -> Optional[None]:
 
     # Handle --help or no arguments (no options and no SSH args)
     if args.help or (len(sys.argv) == 1 and not ssh_args):
-        parser.print_help(file=sys.stderr)
+        _print_help()
         sys.exit(0)
 
     # Set DEBUG environment variable

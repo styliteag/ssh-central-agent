@@ -1557,13 +1557,11 @@ setup_rust_multiplexer() {
 
 # Parse command-line arguments
 parse_arguments() {
-  local help_text="$1"
-  shift
   # Parse arguments manually for cleaner handling of both short and long options
   while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help)
-      echo "$help_text" >&2
+      print_help
       exit 1
       ;;
     -v|--version)
@@ -1672,7 +1670,7 @@ parse_arguments() {
       while [ -n "$OPTARG" ]; do
         case "${OPTARG:0:1}" in
           h)
-            echo "$help_text" >&2
+            print_help
             exit 1
             ;;
           v)
@@ -1772,55 +1770,80 @@ SUBSHELL_MODE=0           # Open subshell with MUX agent environment
 # CMD will be set after argument parsing
 
 
-HELP="Usage: $SCA_SCRIPT [OPTIONS] [command]
+print_help() {
+  local R B C G Y BL D GR
+  if [ -t 2 ] && [ -z "${NO_COLOR:-}" ] && command -v tput >/dev/null 2>&1; then
+    R=$(tput sgr0)
+    B=$(tput bold)
+    C=$(tput setaf 6)
+    G=$(tput setaf 2)
+    Y=$(tput setaf 3)
+    BL=$(tput setaf 4)
+    D=$(tput dim 2>/dev/null || true)
+    GR=$(tput setaf 8 2>/dev/null || tput setaf 7)
+  else
+    R="" B="" C="" G="" Y="" BL="" D="" GR=""
+  fi
+  local S
+  S=$(basename "$SCA_SCRIPT")
+  cat >&2 <<HELPEOF
+${B}${G}SCA - SSH Central Agent${R} - Cross-platform SSH agent multiplexing system
 
-Options:
-  -h, --help            Show this help message and exit
-  -d, --debug           Enable debug mode (verbose output)
-  -r, --reverse         Reverse the order of agents when multiplexing
-  -w, --wait            Run in background and monitor connection, restart if needed
-  -e, --env             Output environment variables in shell format (like ssh-agent -s)
-                        Use with: eval \`$SCA_SCRIPT -e --key=local\` to set SSH_AUTH_SOCK in current shell
-  -l, --level LEVEL     Set security level (0-3, default: auto-detect)
-  --key=local|remote|mux  Specify which key to use (default: remote)
-                           local:  Use local SSH agent only
-                           remote: Use remote SSH agent only (default)
-                           mux:    Use multiplexed agent (combines local + remote)
-  --mux=python|rust       Choose multiplexer type (default: python)
-                           python: Use Python multiplexer (sshagentmux.py)
-                           rust:   Use Rust multiplexer (ssh-agent-mux)
-                           none:   Skip multiplexer, use remote agent only
-  --list                List all configured hosts
-  --find HOSTNAME       Find and display information about a specific host
-  --add HOSTNAME        Add a new host to the configuration
-  -s, --shell           Open a subshell with the MUX agent environment set
-  --                    End of options marker: treat all following args as SSH arguments
-                        Use this when SSH options start with '-' (e.g., -p, -o)
-  --kill                Kill all agents and remote connections, remove socket files
+${B}Usage:${R}  $S [OPTIONS] [user@]hostname [ssh-args ...]
+        $S -s [OPTIONS]
 
-Examples:
-  $SCA_SCRIPT --key=local                    # Start subshell with local key
-  $SCA_SCRIPT --key=remote                   # Start subshell with remote key (default)
-  $SCA_SCRIPT --key=mux                      # Start subshell with multiplexed agent
-  eval \`$SCA_SCRIPT -e --key=local\`         # Set SSH_AUTH_SOCK in current shell
-  $SCA_SCRIPT --list                          # List all configured hosts
-  $SCA_SCRIPT --find myserver                 # Find host 'myserver'
-  $SCA_SCRIPT -s                               # Open subshell with MUX agent environment
-  $SCA_SCRIPT --shell --key=local              # Subshell with local agent only
-  $SCA_SCRIPT myserver                        # Connect to 'myserver' (uses remote agent)
-  $SCA_SCRIPT --key=local user@host           # Connect using local agent
-  $SCA_SCRIPT --key=remote -- -p9922 root@192.168.178.100 ls  # Connect with SSH options and run 'ls' command
-  $SCA_SCRIPT --key=mux -- -p9922 host       # Connect using multiplexed agent with custom port
-  $SCA_SCRIPT --wait                          # Run in background monitoring mode
-  $SCA_SCRIPT --kill                          # Clean up all agents and connections"
+${B}Options:${R}
+  ${C}-h${R}, ${C}--help${R}              Show this help message and exit
+  ${C}-v${R}, ${C}--version${R}           Show version information and exit
+  ${C}-d${R}, ${C}--debug${R}             Enable debug mode (verbose output)
+  ${C}-r${R}, ${C}--reverse${R}           Reverse the order of agents when multiplexing
+  ${C}-w${R}, ${C}--wait${R}              Run in background and monitor connection
+  ${C}-e${R}, ${C}--env${R}               Output environment variables in shell format
+  ${C}-l${R}, ${C}--level${R} ${Y}LEVEL${R}       Set security level (0-3, default: auto-detect)
+  ${C}--key${R} ${Y}{local,remote,mux}${R}
+                          Specify which key to use
+                            ${Y}local${R}:  Use local SSH agent only
+                            ${Y}remote${R}: Use remote SSH agent only (default)
+                            ${Y}mux${R}:    Use multiplexed agent (local + remote)
+  ${C}--mux${R} ${Y}{python,rust}${R}
+                          Choose multiplexer type (default: python)
+                            ${Y}python${R}: Use Python multiplexer (sshagentmux.py)
+                            ${Y}rust${R}:   Use Rust multiplexer (ssh-agent-mux)
+                            ${Y}none${R}:   Skip multiplexer, use remote agent only
+  ${C}-s${R}, ${C}--shell${R}             Open a subshell with the MUX agent environment set
+  ${C}--list${R}                List all configured hosts
+  ${C}--find${R} ${Y}HOSTNAME${R}       Find and display information about a specific host
+  ${C}--add${R} ${Y}HOSTNAME${R}        Add a new host to the configuration
+  ${C}--kill${R}                Kill all agents and remote connections
+  ${C}--${R}                    End of options; remaining args passed to ssh
+
+${B}Examples:${R}
+  ${D}${GR}# Direct SSH connection (default)${R}
+  $S ${Y}user@host${R}                          ${D}${GR}# Connect using remote agent${R}
+  $S ${C}--key=local${R} ${Y}user@host${R}              ${D}${GR}# Connect using local agent${R}
+  $S ${C}--key=mux${R} ${Y}user@host${R}               ${D}${GR}# Connect using multiplexed agent${R}
+  $S ${C}--key=remote${R} ${C}--${R} ${Y}-p9922 root@host${R}  ${D}${GR}# SSH options after --${R}
+
+  ${D}${GR}# Subshell mode${R}
+  $S ${C}-s${R}                                  ${D}${GR}# Open subshell with MUX agent env${R}
+  $S ${C}--shell${R} ${C}--key=local${R}                ${D}${GR}# Subshell with local agent only${R}
+
+  ${D}${GR}# Environment & management${R}
+  eval \`$S ${C}-e${R} ${C}--key=local${R}\`              ${D}${GR}# Set SSH_AUTH_SOCK in current shell${R}
+  $S ${C}--list${R}                              ${D}${GR}# List all configured hosts${R}
+  $S ${C}--find${R} ${Y}myserver${R}                    ${D}${GR}# Find host 'myserver'${R}
+  $S ${C}--wait${R}                              ${D}${GR}# Background monitoring mode${R}
+  $S ${C}--kill${R}                              ${D}${GR}# Clean up all agents${R}
+HELPEOF
+}
 
 # Parse arguments
 # If no arguments provided, show help
 if [ $# -eq 0 ]; then
-  echo "$HELP" >&2
+  print_help
   exit 1
 fi
-parse_arguments "$HELP" "$@"
+parse_arguments "$@"
 
 # Set up exit trap for cleanup
 SCA_EXITING=false
