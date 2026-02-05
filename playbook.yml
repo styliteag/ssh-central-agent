@@ -110,33 +110,28 @@
       dest: "{{ bindir }}/{{ command_sca }}.sh"
       state: link
       force: yes
-  - name: Create Local SSH config File
+  - name: Create Local SSH config_single File (Host blocks)
     template:
-      src: config.j2
+      src: config_single.j2
       dest: "./{{ ssh_config_file }}_single"
-  - name: Create Local SSH config File
+  - name: Create Local SSH config_match File (Match blocks)
     template:
-      src: config.j2
-      dest: "./{{ ssh_config_file }}"
-  - name: Remove Include from {{ ssh_config_file }}_single
-    lineinfile:
-      path: "./{{ ssh_config_file }}_single"
-      regexp: '^(Include .*)$'
-      line: '## \1'
-      backrefs: yes
-  - name: Make sure the config File is included in ~/.ssh/config
-    lineinfile:
-      path: ~/.ssh/config
-      line: "Include {{ playbook_dir }}/hosts/*"
-      insertbefore: BOF
-      #insertbefore: "^Host "
-      #firstmatch: yes
-      create: yes
-  - name: Make sure the config_single File is included in ~/.ssh/config
-    # The Include must be before the Hosts
+      src: config_match.j2
+      dest: "./{{ ssh_config_file }}_match"
+  - name: Make sure the config_single File is included in ~/.ssh/config (first)
+    # Order: config_single → hosts/* → config_match
     lineinfile:
       path: ~/.ssh/config
       line: "Include {{ playbook_dir }}/{{ ssh_config_file }}_single"
       insertbefore: BOF
-      #insertbefore: "^Host "
-      #firstmatch: yes
+      create: yes
+  - name: Make sure the config File (hosts/*) is included in ~/.ssh/config (after config_single)
+    lineinfile:
+      path: ~/.ssh/config
+      line: "Include {{ playbook_dir }}/hosts/*"
+      insertafter: '^Include .+_single\s*$'
+  - name: Make sure the config_match File is included in ~/.ssh/config (after hosts/*)
+    lineinfile:
+      path: ~/.ssh/config
+      line: "Include {{ playbook_dir }}/{{ ssh_config_file }}_match"
+      insertafter: '^Include .+/hosts/\*'

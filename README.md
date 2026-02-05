@@ -139,7 +139,8 @@ ssh-add ~/.ssh/id_ed25519
 
   This will:
   - Generate the Python entrypoint `sca` and the legacy bash entrypoint `sca.sh`
-  - Create SSH configuration files
+  - Create SSH configuration files (`config_single` for Host blocks, `config_match` for Match blocks)
+  - Add `Include` lines to `~/.ssh/config` (load order: `config_single` → `hosts/*` → `config_match`)
   - Set up shell integration (.bashrc/.zshrc)
 
 **Note:** The playbook automatically adapts to wherever you've checked out the repository. See [SETUP.md](SETUP.md) for detailed setup instructions.

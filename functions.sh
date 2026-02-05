@@ -595,7 +595,7 @@ cleanup_temp_agent() {
 
 # Build SSH command with optional identity file
 build_ssh_cmd() {
-    local cmd="ssh -a -F $PLAYBOOK_DIR/$SSH_CONFIG_FILE"
+    local cmd="ssh -a -F $PLAYBOOK_DIR/${SSH_CONFIG_FILE}_single"
     # If we have a temporary agent, use it instead of -i to avoid multiple passphrase prompts
     if [ -n "$TEMP_AGENT_SOCK" ]; then
         # Use equals format to avoid quote issues when eval'd
@@ -621,7 +621,7 @@ determine_security_level() {
             if [ -n "$id_fingerprint" ]; then
                 if SSH_AUTH_SOCK="$MUX_SSH_AUTH_SOCK" ssh-add -l 2>/dev/null | grep -q "$id_fingerprint"; then
                     # Mux socket has the local key, use it
-                    ssh_cmd="ssh -a -F $PLAYBOOK_DIR/$SSH_CONFIG_FILE -o IdentityAgent=$MUX_SSH_AUTH_SOCK"
+                    ssh_cmd="ssh -a -F $PLAYBOOK_DIR/${SSH_CONFIG_FILE}_single -o IdentityAgent=$MUX_SSH_AUTH_SOCK"
                     log_debug "Determining security level with mux socket: $ssh_cmd"
                 else
                     # Mux socket doesn't have local key, use build_ssh_cmd
@@ -825,7 +825,7 @@ execute_command_or_shell() {
     fi
     log_info "Connecting via SSH config (IdentityAgent will use $SSH_SOCKET): ssh $SSH_ARGS"
     # SSH config already has IdentityAgent set to mux socket, so just run ssh normally
-    local ssh_cmd="ssh -F $PLAYBOOK_DIR/$SSH_CONFIG_FILE"
+    local ssh_cmd="ssh"
     # Add verbose flag in debug mode
     if [ "${DEBUG:-0}" == "1" ]; then
       ssh_cmd="$ssh_cmd -v"
@@ -839,12 +839,12 @@ execute_command_or_shell() {
       target_host=$(echo "$SSH_ARGS" | awk '{print $1}')
       if [ -n "$target_host" ]; then
         log_debug "SSH config resolution for host '$target_host':"
-        ssh -F "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" -G "$target_host" 2>/dev/null | grep -E "^identityagent" | while IFS= read -r line; do
+        ssh -G "$target_host" 2>/dev/null | grep -E "^identityagent" | while IFS= read -r line; do
           log_debug "  Config: $line"
         done
         # Resolve the IdentityAgent path from config
         local config_identityagent
-        config_identityagent=$(ssh -F "$PLAYBOOK_DIR/$SSH_CONFIG_FILE" -G "$target_host" 2>/dev/null | grep "^identityagent " | sed 's/^identityagent //')
+        config_identityagent=$(ssh -G "$target_host" 2>/dev/null | grep "^identityagent " | sed 's/^identityagent //')
         if [ -n "$config_identityagent" ]; then
           log_debug "  SSH config IdentityAgent resolves to: $config_identityagent"
           if [ -L "$config_identityagent" ]; then
@@ -937,17 +937,16 @@ execute_command_or_shell() {
 }
 
 # Patch SSH config: add jump aliases (sca-jump, jump, etc.) to the Host line for
-# this user's level. Run on both config and config_single.
+# this user's level in config_single.
 # - 1st sed: strip any existing aliases after -sca-magic-jump (reset before re-apply)
 # - 2nd sed: append "jump jump_local jump_my sca-jump ..." to L$MY_LEVEL-sca-magic-jump
 #
 # Only patches when needed; uses $PLAYBOOK_DIR/.sca-jump-level to remember:
 # - LEVEL: last patched level. Re-patch if MY_LEVEL != LEVEL (backend or --level change).
-# - If config or config_single is newer than the status file, re-patch (Ansible overwrote).
+# - If config_single is newer than the status file, re-patch (Ansible overwrote).
 patch_jump_aliases() {
-  local f cfg single status need=0
+  local f single status need=0
   status="$PLAYBOOK_DIR/.sca-jump-level"
-  cfg="$PLAYBOOK_DIR/$SSH_CONFIG_FILE"
   single="$PLAYBOOK_DIR/${SSH_CONFIG_FILE}_single"
 
   log_info "Patching jump aliases (sca-jump, jump, etc.) for level $MY_LEVEL in SSH config"
@@ -962,9 +961,6 @@ patch_jump_aliases() {
     if [ "$stored" != "$MY_LEVEL" ]; then
       need=1
       log_info "Patch: level changed ($stored -> $MY_LEVEL), will patch"
-    elif [ -f "$cfg" ] && [ "$cfg" -nt "$status" ]; then
-      need=1
-      log_info "Patch: $SSH_CONFIG_FILE newer than status (e.g. Ansible), will patch"
     elif [ -f "$single" ] && [ "$single" -nt "$status" ]; then
       need=1
       log_info "Patch: ${SSH_CONFIG_FILE}_single newer than status (e.g. Ansible), will patch"
@@ -974,7 +970,7 @@ patch_jump_aliases() {
   [ "$need" -eq 0 ] && log_debug "Patch: level $MY_LEVEL already applied, skip" && return 0
 
   log_info "Patching jump aliases (sca-jump, jump, etc.) for level $MY_LEVEL in SSH config"
-  for f in "$cfg" "$single"; do
+  for f in "$single"; do
     if [ ! -f "$f" ]; then
       log_debug "  Skip (not a file): $f"
       continue

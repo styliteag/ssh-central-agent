@@ -3,6 +3,7 @@ config
 scassh
 config_main
 config_single
+config_match
 localvars.yml
 *.bak
 *.pyc

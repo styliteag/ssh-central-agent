@@ -1,0 +1,186 @@
+#
+# Copyright 2024, Wim Bonis, Stylite AG
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+#ForwardAgent yes
+
+# WarnWeakCrypto support: Only apply for OpenSSH 10.1+ (where WarnWeakCrypto was introduced)
+# Older versions will skip this Match block and won't error
+IgnoreUnknown WarnWeakCrypto
+WarnWeakCrypto no
+
+Host sca-key sca-key_my sca-key_local sca-key_org sca-key_direct sca-key_mux
+    Tag sca-key
+	User {{ remote_username }}
+	HostName {{ sca_key_server }}
+	Port {{ sca_key_server_port }}
+	ExitOnForwardFailure yes
+	ForwardAgent no
+	#IdentityAgent none
+{% if my_ssh_key is defined and my_ssh_key != '~/.ssh/id_unused' %}
+	IdentityFile {{ my_ssh_key }}
+{% endif %}
+	# TODO Change to SCA in the future
+	SendEnv STY_*
+	SetEnv STY_LOCALUSER={{ remote_username }}
+
+# The sca-magic-jump is "magic" for the sed command in sca
+Host sca-jmp-level0 jmp0 jmp-level0 jump-level0 L0-sca-magic-jump
+    Tag sca-jmp
+	User {{ remote_username }}
+	HostName {{ sca_key_server }}
+	ForwardAgent no
+	#IdentityAgent $LOCAL_SSH_AUTH_SOCK
+	IdentityAgent {{ mux_auth_sock }}
+	#BatchMode yes
+	ExitOnForwardFailure yes
+	ConnectTimeout 1
+	SendEnv STY_*
+	SetEnv STY_LOCALUSER={{ remote_username }}
+
+Host sca-jmp-level1 jmp1 jmp-level1 jump-level1 L1-sca-magic-jump
+	Tag sca-jmp
+	User {{ remote_username }}
+	HostName {{ sca_key_server }}
+	Port 9901
+	#ForwardAgent $SCA_SSH_AUTH_SOCK
+	#ForwardAgent /path/to/.sock
+	#ForwardAgent yes
+	ForwardAgent no
+	ExitOnForwardFailure yes
+	#ForkAfterAuthentication yes
+	#IdentityAgent none
+	#IdentityAgent $ORG_SSH_AUTH_SOCK
+	IdentityAgent {{ mux_auth_sock }}
+	SendEnv STY_*
+	SetEnv STY_LOCALUSER={{ remote_username }}
+	#ProxyJump sca-jmp-level0
+
+Host sca-jmp-level2 jmp2 jmp-level2 jump-level2 L2-sca-magic-jump
+	Tag sca-jmp
+	User {{ remote_username }}
+	HostName {{ sca_key_server }}
+	Port 9902
+	#ForwardAgent $SCA_SSH_AUTH_SOCK
+	#ForwardAgent /path/to/.sock
+	#ForwardAgent yes
+	ForwardAgent no
+	ExitOnForwardFailure yes
+	#ForkAfterAuthentication yes
+	#IdentityAgent none
+	#IdentityAgent $ORG_SSH_AUTH_SOCK
+	IdentityAgent {{ mux_auth_sock }}
+	SendEnv STY_*
+	SetEnv STY_LOCALUSER={{ remote_username }}
+	#ProxyJump sca-jmp-level0
+
+Host sca-jmp-level3 jmp3 jmp-level3 jump-level3 L3-sca-magic-jump
+	Tag sca-jmp
+	User {{ remote_username }}
+	HostName {{ sca_key_server }}
+	Port 9903
+	#ForwardAgent $SCA_SSH_AUTH_SOCK
+	#ForwardAgent /path/to/.sock
+	#ForwardAgent yes
+	ForwardAgent no
+	ExitOnForwardFailure yes
+	#ForkAfterAuthentication yes
+	#IdentityAgent none
+	#IdentityAgent $ORG_SSH_AUTH_SOCK
+	IdentityAgent {{ mux_auth_sock }}
+	SendEnv STY_*
+	SetEnv STY_LOCALUSER={{ remote_username }}
+	#ProxyJump sca-jmp-level0
+
+Host sca-jmp-level0 jmp0 jmp-level0 jump-level0 L0-sca-magic-jump
+	Tag sca-jmp
+	User {{ remote_username }}
+	HostName {{ sca_key_server }}
+	Port {{ sca_key_server_port }}
+	ForwardAgent no
+	IdentityAgent {{ mux_auth_sock }}
+	#BatchMode yes
+	ExitOnForwardFailure yes
+	ConnectTimeout 1
+	SendEnv STY_*
+	SetEnv STY_LOCALUSER={{ remote_username }}
+
+Host mydev sca-mydev sca-mydev_my sca-mydev_local sca-mydev_direct sca-mydev_sca sca-mydev_mux
+	Tag sca-host
+	user {{ remote_username }}
+    hostname 10.50.6.1
+    port 22
+    # mydev needs to use the Forwarded key for gitlab
+    ForwardAgent yes
+
+Host mydev40 sca-mydev40 sca-mydev40_my sca-mydev40_local sca-mydev40_direct sca-mydev40_sca sca-mydev40_mux
+	Tag sca-host
+	user {{ remote_username }}
+    hostname 10.40.6.1
+    port 22
+    # mydev needs to use the Forwarded key for gitlab
+    ForwardAgent yes
+
+
+
+# There is nothing special about the "_" it just a suffix we use as alias to trigger rules
+Host *_org
+    IdentityAgent $ORG_SSH_AUTH_SOCK
+
+Host *_local
+    IdentityAgent $SSH_AUTH_SOCK
+	ForwardAgent {{ sca_auth_sock }}
+
+Host *_remote
+    #IdentityAgent $SCA_SSH_AUTH_SOCK
+	IdentityAgent {{ sca_auth_sock }}
+	ForwardAgent {{ sca_auth_sock }}
+
+Host *_mux
+    #IdentityAgent $SCA_SSH_AUTH_SOCK
+	IdentityAgent {{ mux_auth_sock }}
+	ForwardAgent {{ mux_auth_sock }}
+
+
+# if both ProxyJump and ProxyCommand are set, ProxyJump wins. ProxyCommand is ignored.
+# If only one is set, the other is ignored.
+# If neither is set, the connection is direct.
+
+Host *_direct
+    ProxyJump none
+	ProxyCommand none
+
+Host *_nojump
+    ProxyJump none
+	#ProxyCommand none
+
+Host *_jump
+    ProxyJump sca-jump
+	#roxyCommand none
+
+Host *_noproxy
+    #ProxyJump none
+	ProxyCommand none
+
+Host *_proxy
+	ProxyCommand "ssh -W '[%h]:%p' sca-jump"
+	ProxyJump none
+
+Host *_my
+	#ForwardAgent yes
+	#IdentityAgent $SSH_AUTH_SOCK
+	#IdentityAgent $SSH_AUTH_SOCK
+	#ForwardAgent $SSH_AUTH_SOCK
+	#ProxyJump sca-jump_my
+	ProxyCommand sh -c "socat 2>/dev/null - tcp4:%h:%p,connect-timeout=0.1 || ssh -W '[%h]:%p' sca-jump 2>/dev/null"

@@ -1,0 +1,41 @@
+#
+# Copyright 2024, Wim Bonis, Stylite AG
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+#Match final originalhost "sca-*,!sca-jump,!sca-jump-org,!sca-key"
+#	ForwardAgent yes
+#	ProxyJump sca-jump-org
+#	#ProxyCommand ssh -W %h:%p sca-jump-org
+#   ProxyCommand sh -c "socat 2>/dev/null - tcp4:%h:%p,connect-timeout=0.1 || exec ssh -W  %h:%p proxyhost.example.com 2>/dev/null"
+
+
+# Common settings for all user-defined hosts from hosts/* files
+# Only hosts tagged with "sca-host" will match
+Match tagged sca-host
+	# Include ~/.ssh/config_sca_common
+	# Common Settings for All hosts tagged with "sca-host"
+    KbdInteractiveAuthentication no
+    TCPKeepAlive yes
+	#IdentityAgent {{ sca_auth_sock }}
+	#ForwardAgent {{ sca_auth_sock }}
+	IdentityAgent {{ mux_auth_sock }}
+	#ForwardAgent {{ mux_auth_sock }}
+
+    # if both ProxyJump and ProxyCommand are set, ProxyJump wins. ProxyCommand is ignored.
+    ###ProxyJump sca-jump_org
+	### ProxyCommand ssh -W [%h]:%p sca-jump_org
+	#
+	### First Try Direct: "socat 2>/dev/null - tcp4:%h:%p,connect-timeout=0.1"
+	#ProxyCommand sh -c "socat 2>/dev/null - tcp4:%h:%p,connect-timeout=0.1 || ssh -W '[%h]:%p' sca-jump_org 2>/dev/null || ssh -W '[%h]:%p' sca-jump 2>/dev/null || ssh -W '[%h]:%p' sca-jump_local 2>/dev/null"
+    ProxyCommand sh -c "socat 2>/dev/null - tcp4:%h:%p,connect-timeout=0.2 || ssh -W '[%h]:%p' sca-jump 2>/dev/null"

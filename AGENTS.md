@@ -10,7 +10,7 @@ The system relies on three main pillars:
 
 1.  **Level-Based Access Control**: Users are assigned security levels (0-3) that determine which jump hosts they can access. Access is enforced via specific jump hosts (e.g., `sca-jmp-level1`).
 2.  **SSH Agent Multiplexing**: The `sshagentmux.py` Python daemon acts as a proxy, combining multiple SSH agents into a single socket. This allows authentication challenges to be satisfied by keys from either source.
-3.  **Dynamic Configuration**: The system uses Ansible and Jinja2 templates to generate complex `ssh_config` files dynamically based on user permissions and host definitions.
+3.  **Dynamic Configuration**: The system uses Ansible and Jinja2 templates to generate split SSH config files (`config_single` for Host blocks, `config_match` for Match blocks) that are included from `~/.ssh/config` alongside per-host files from `hosts/`.
 
 ### Key Architecture Patterns
 -   **Socket-based Communication**: Uses Unix sockets for SSH agent communication (`~/.ssh/scadev-agent.sock`, `~/.ssh/scadev-mux.sock`).
@@ -29,11 +29,19 @@ The system relies on three main pillars:
 
 ### Configuration Management
 -   **`playbook.yml`**: Ansible playbook for system deployment and configuration.
--   **`config`**: The **generated** SSH configuration file. **Do not edit this directly.**
--   **`config_single`**: Single-host configuration variant.
+-   **`config_single`**: **Generated** SSH config with Host blocks (sca-key, jump levels, wildcard suffix patterns). Loaded first via `~/.ssh/config`. **Do not edit directly.**
+-   **`config_match`**: **Generated** SSH config with Match blocks (common settings for tagged hosts). Loaded last via `~/.ssh/config`. **Do not edit directly.**
+-   **`hosts/`**: Directory containing individual host configuration files (YAML-like). Loaded between `config_single` and `config_match`.
 -   **`localvars.yml`**: Local variable overrides for Ansible deployment.
--   **`hosts/`**: Directory containing individual host configuration files (YAML-like).
--   **`templates/`**: Jinja2 templates (`config.j2`, `sca.sh.j2`, etc.) used to generate the final files.
+-   **`templates/`**: Jinja2 templates (`config_single.j2`, `config_match.j2`, `sca.sh.j2`, `sca.py.j2`, etc.) used to generate the final files.
+
+#### SSH Config Load Order in `~/.ssh/config`
+```
+Include .../config_single   ← Host blocks (sca-key, jmp-levels, suffix wildcards)
+Include .../hosts/*          ← Individual host files
+Include .../config_match     ← Match blocks (applied after all hosts are defined)
+```
+Internal SCA connections (sca-key, agent forwarding) use `-F config_single` directly. User SSH connections use `~/.ssh/config` which includes all three.
 
 ## Development & Usage Guidelines
 
@@ -81,8 +89,8 @@ This is the primary tool for interaction. It creates a subshell with `SSH_AUTH_S
 **Note**: The system automatically multiplexes temporary agents (created from identity files) with the remote agent when both are available. This ensures that both local and remote keys are available through the multiplexed socket.
 
 ### Configuration Management
-**Important**: The `config` file is generated. Never edit it directly.
-1.  **Modify**: Edit `playbook.yml`, `localvars.yml`, files in `hosts/`, or templates in `templates/`.
+**Important**: `config_single` and `config_match` are generated files. Never edit them directly.
+1.  **Modify**: Edit templates (`templates/config_single.j2`, `templates/config_match.j2`), `localvars.yml`, files in `hosts/`, or `playbook.yml`.
 2.  **Apply**: Run `ansible-playbook playbook.yml` to regenerate the configuration.
 
 ### Custom SSH Key for SCA Connections
@@ -104,7 +112,7 @@ This key will be:
 ### Adding a New Host
 1.  Create or edit a file in `hosts/`.
 2.  Follow the existing format (Host, Hostname, User, Port, etc.).
-3.  Run the Ansible playbook to regenerate the `config`.
+3.  Run the Ansible playbook to regenerate the config files.
 
 ## Environment Variables
 Key environment variables used throughout the system:
@@ -128,7 +136,7 @@ Key environment variables used throughout the system:
 -   **Agent Status**: Check `ssh-add -l` inside the subshell to see available keys.
 -   **Socket Check**: Monitor socket files in `~/.ssh/scadev-*`.
 -   **Multiplexer Logs**: `sshagentmux.py` logs to stderr. Check for "SSH_AGENT_ERROR" or signing failures.
--   **SSH Config Test**: `ssh -F config -T <hostname>`
+-   **SSH Config Test**: `ssh -G <hostname>` (uses `~/.ssh/config` which includes all SCA config files)
 -   **Identity File Detection**: If no local agent is found, the script automatically looks for identity files. It checks:
     1. The key specified in `my_ssh_key` from the SSH config (if set in `localvars.yml`)
     2. Standard locations: `~/.ssh/id_ed25519`, `~/.ssh/id_rsa`, `~/.ssh/id_ecdsa`

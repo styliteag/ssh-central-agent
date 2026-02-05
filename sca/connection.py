@@ -65,7 +65,7 @@ def determine_security_level(
             if id_fingerprint:
                 if check_key_in_agent(mux_ssh_auth_sock, id_fingerprint):
                     # Mux socket has the local key, use it
-                    config_path = Path(playbook_dir) / ssh_config_file
+                    config_path = Path(playbook_dir) / f"{ssh_config_file}_single"
                     ssh_cmd_list = [
                         "ssh", "-a", "-F", str(config_path),
                         "-o", f"IdentityAgent={mux_ssh_auth_sock}"

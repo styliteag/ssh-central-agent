@@ -169,8 +169,8 @@ def _build_ssh_command(
     Returns:
         List of SSH command arguments
     """
-    config_path = Path(playbook_dir) / ssh_config_file
-    ssh_cmd = ["ssh", "-F", str(config_path)]
+    # User SSH connections use ~/.ssh/config (which includes config_single, hosts/*, config_match)
+    ssh_cmd = ["ssh"]
 
     # Override IdentityAgent to use the working socket
     if " " in expanded_socket:

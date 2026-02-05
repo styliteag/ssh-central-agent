@@ -14,7 +14,7 @@ def patch_jump_aliases(
 ) -> None:
     """
     Patch SSH config: add jump aliases (sca-jump, jump, etc.) to the Host line
-    for this user's level.
+    for this user's level in config_single.
 
     Args:
         playbook_dir: Directory containing SSH config files
@@ -22,7 +22,6 @@ def patch_jump_aliases(
         my_level: User's security level
     """
     status_file = Path(playbook_dir) / ".sca-jump-level"
-    config_path = Path(playbook_dir) / ssh_config_file
     config_single_path = Path(playbook_dir) / f"{ssh_config_file}_single"
 
     log_info(f"Patching jump aliases (sca-jump, jump, etc.) for level {my_level} in SSH config")
@@ -47,12 +46,9 @@ def patch_jump_aliases(
         except Exception:
             need_patch = True
 
-        # Check if config files are newer than status
+        # Check if config_single is newer than status
         if not need_patch:
-            if config_path.exists() and config_path.stat().st_mtime > status_file.stat().st_mtime:
-                need_patch = True
-                log_info(f"Patch: {ssh_config_file} newer than status (e.g. Ansible), will patch")
-            elif config_single_path.exists() and config_single_path.stat().st_mtime > status_file.stat().st_mtime:
+            if config_single_path.exists() and config_single_path.stat().st_mtime > status_file.stat().st_mtime:
                 need_patch = True
                 log_info(f"Patch: {ssh_config_file}_single newer than status (e.g. Ansible), will patch")
 
@@ -61,7 +57,7 @@ def patch_jump_aliases(
         return
 
     # Patch the files
-    for config_file in [config_path, config_single_path]:
+    for config_file in [config_single_path]:
         if not config_file.exists():
             log_debug(f"  Skip (not a file): {config_file}")
             continue

@@ -182,7 +182,7 @@ def build_ssh_cmd(
     Returns:
         List of command arguments for subprocess
     """
-    config_path = Path(playbook_dir) / ssh_config_file
+    config_path = Path(playbook_dir) / f"{ssh_config_file}_single"
     cmd = ["ssh", "-a", "-F", str(config_path)]
 
     # If we have a temporary agent, use it instead of -i to avoid multiple passphrase prompts
