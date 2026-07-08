@@ -816,7 +816,6 @@ def main():
 
     # Validate rusername
     if not rusername:
-        from .logging_utils import log_error
         log_error("RUSERNAME not set. Set it in environment or localvars.yml")
         log_error("Example: export RUSERNAME=wb")
         sys.exit(1)
